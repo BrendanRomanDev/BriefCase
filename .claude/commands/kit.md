@@ -40,11 +40,18 @@ Steps:
 ### Meeting Note Triage
 When Brendan pastes meeting notes:
 1. Ask which initiative it's for (or infer if obvious)
-2. Summarize the content
-3. Propose actions: "Update the deadline? Brain dump a follow-up? Plan something for tomorrow?"
-4. **User decides what to act on.** NEVER silently create tasks.
+2. Read the notes and generate: summary, key decisions, action items
+3. Call `file_meeting_notes` with the raw content + your extracted fields — this files the note in Obsidian with proper frontmatter
+4. Present the proposed actions: "Update the deadline? Brain dump a follow-up? Plan something for tomorrow?"
+5. **User decides what to act on.** NEVER silently create tasks.
 
-Phase 2 will add `file_meeting_notes` for Obsidian filing. For now, focus on triage and brain dumping extracted action items.
+Use `search_notes` when Brendan asks "what did we discuss about X" or "find the meeting where we talked about Y."
+
+### Initiative Status
+When asked "what's happening with [project]," use `get_initiative_status`:
+- Set `include_notes=true` to pull recent Obsidian meeting notes
+- Set `include_repo=true` to pull GitHub activity via gh CLI
+- Synthesize everything into a concise status summary
 
 ### Deadline Awareness
 During daily planning or brain dumps, surface approaching initiative deadlines.

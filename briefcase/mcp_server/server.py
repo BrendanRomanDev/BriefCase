@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,9 @@ TOOL QUICK GUIDE:
 - query_daily: Look up a day's task plan
 - get_forecast: DB-side forecast (deadlines, inbox, current time) - agent merges with gcal
 - get_recent_activity: Recent dailies and session notes
+- file_meeting_notes: Paste notes → filed in Obsidian → summary + proposed actions
+- search_notes: Search Obsidian vault by keyword, scoped to initiative/date
+- get_initiative_status: Full status with DB + Obsidian notes + optional gh CLI
 - save_conversation_notes: Save session context at end of conversation
 - backup_database: Create timestamped backup
 
@@ -92,6 +95,21 @@ def _import_daily_tools():
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, get_recent_activity
 
 
+def _import_meeting_tools():
+    """Import meeting intelligence tools."""
+    from briefcase.mcp_server.tools.file_meeting_notes import (
+        file_meeting_notes, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, file_meeting_notes
+
+    from briefcase.mcp_server.tools.search_notes import (
+        search_notes, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, search_notes
+
+    from briefcase.mcp_server.tools.get_initiative_status import (
+        get_initiative_status, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, get_initiative_status
+
+
 def _import_system_tools():
     """Import system tools."""
     from briefcase.mcp_server.tools.save_conversation_notes import (
@@ -119,6 +137,7 @@ class BriefCaseServer:
         self._register_tool_batch(_import_brain_dump_tools())
         self._register_tool_batch(_import_initiative_tools())
         self._register_tool_batch(_import_daily_tools())
+        self._register_tool_batch(_import_meeting_tools())
         self._register_tool_batch(_import_system_tools())
 
         self._register_mcp_handlers()
