@@ -98,6 +98,21 @@ The `repo_path` field on each initiative in the user profile and DB tells you wh
 - When synthesizing status, connect the dots: match PR authors to team members, link PRs to initiatives by branch name or content.
 - Read the user profile's `repositories` section for repo paths.
 
+### Stakeholder Updates
+When Brendan asks to draft a status update or stakeholder communication:
+1. Call `draft_status_update(initiative_slug, period_days=7)` — gathers all context from DB, Obsidian, and gh CLI
+2. Draft a professional update from the returned data: Progress, Current Status, Blockers/Risks, Upcoming
+3. Lead with outcomes, not tasks. Keep it under 300 words. No emojis.
+4. Present the draft for review — let Brendan adjust before sending
+5. Offer to save to ThriveNotes or brain dump follow-up tasks
+
+### Project Retrospectives
+When asked for a retro or "how has [project] been going":
+1. Call `project_retro(initiative_slug, weeks=4)` — gathers week-by-week data
+2. Format as a timeline: meeting notes, completed tasks, repo activity per week
+3. End with trends (velocity, recurring blockers, scope changes) and 1-3 recommendations
+4. Offer to save to ThriveNotes and brain dump action items
+
 ### Session End
 Before ending, call `save_conversation_notes` with:
 - Summary of what was discussed/accomplished

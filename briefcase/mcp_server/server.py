@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,8 @@ TOOL QUICK GUIDE:
 - file_meeting_notes: Paste notes → filed in Obsidian → summary + proposed actions
 - search_notes: Search Obsidian vault by keyword, scoped to initiative/date
 - get_initiative_status: Full status with DB + Obsidian notes + optional gh CLI
+- draft_status_update: Gather context for agent to draft stakeholder update
+- project_retro: Week-by-week retrospective with velocity trends
 - save_conversation_notes: Save session context at end of conversation
 - backup_database: Create timestamped backup
 
@@ -110,6 +112,17 @@ def _import_meeting_tools():
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, get_initiative_status
 
 
+def _import_reporting_tools():
+    """Import status and reporting tools."""
+    from briefcase.mcp_server.tools.draft_status_update import (
+        draft_status_update, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, draft_status_update
+
+    from briefcase.mcp_server.tools.project_retro import (
+        project_retro, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, project_retro
+
+
 def _import_system_tools():
     """Import system tools."""
     from briefcase.mcp_server.tools.save_conversation_notes import (
@@ -138,6 +151,7 @@ class BriefCaseServer:
         self._register_tool_batch(_import_initiative_tools())
         self._register_tool_batch(_import_daily_tools())
         self._register_tool_batch(_import_meeting_tools())
+        self._register_tool_batch(_import_reporting_tools())
         self._register_tool_batch(_import_system_tools())
 
         self._register_mcp_handlers()
