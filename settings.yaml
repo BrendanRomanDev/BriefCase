@@ -1,0 +1,13 @@
+database_path: ~/.briefcase/briefcase.db
+obsidian_vault: ~/Notes/ThriveNotes
+user_profile: ~/.briefcase/user_profile.yaml
+backup_dir: ~/.briefcase/backups
+
+features:
+  printing: true
+  repo_integration: true
+
+printing:
+  method: ssh
+  ssh_host: ""
+  ssh_command: ""

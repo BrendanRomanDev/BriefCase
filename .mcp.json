@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "briefcase": {
+      "command": "/Users/brendan.roman/Programming/BriefCase/venv/bin/python",
+      "args": [
+        "/Users/brendan.roman/Programming/BriefCase/briefcase/mcp_server/server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "/Users/brendan.roman/Programming/BriefCase"
+      }
+    }
+  }
+}
