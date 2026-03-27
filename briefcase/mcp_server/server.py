@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,16 @@ TOOL QUICK GUIDE:
 - draft_status_update: Gather context for agent to draft stakeholder update
 - project_retro: Week-by-week retrospective with velocity trends
 - save_conversation_notes: Save session context at end of conversation
+- print_daily_list: Print daily checklist receipt (template adds checkboxes)
+- print_custom: Print any markdown content as a receipt
 - backup_database: Create timestamped backup
+
+PRINTING FORMAT RULES:
+- ALWAYS use 12-hour time: "2:00 PM" not "14:00"
+- Events: NO checkbox, just "2:00 PM - Meeting Name"
+- Tasks: Checkbox added automatically, just pass "Task description"
+- Work items: Tag with [initiative-slug]
+- DO NOT add manual checkbox characters — the template handles them
 
 CRITICAL RULES:
 - Events live in Google Calendar, NOT the database.
@@ -123,6 +132,17 @@ def _import_reporting_tools():
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, project_retro
 
 
+def _import_printing_tools():
+    """Import printing tools (behind features.printing flag)."""
+    from briefcase.mcp_server.tools.print_daily_list import (
+        print_daily_list, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, print_daily_list
+
+    from briefcase.mcp_server.tools.print_custom import (
+        print_custom, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, print_custom
+
+
 def _import_system_tools():
     """Import system tools."""
     from briefcase.mcp_server.tools.save_conversation_notes import (
@@ -152,6 +172,7 @@ class BriefCaseServer:
         self._register_tool_batch(_import_daily_tools())
         self._register_tool_batch(_import_meeting_tools())
         self._register_tool_batch(_import_reporting_tools())
+        self._register_tool_batch(_import_printing_tools())
         self._register_tool_batch(_import_system_tools())
 
         self._register_mcp_handlers()

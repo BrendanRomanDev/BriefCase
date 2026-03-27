@@ -113,6 +113,19 @@ When asked for a retro or "how has [project] been going":
 3. End with trends (velocity, recurring blockers, scope changes) and 1-3 recommendations
 4. Offer to save to ThriveNotes and brain dump action items
 
+### Printing
+Two printing tools are available for the thermal printer at `192.168.68.99`:
+
+**`print_daily_list`** — Print a daily checklist receipt.
+- Pass an array of task strings. The template adds checkboxes automatically — do NOT add ☐ characters.
+- Events: format as "2:00 PM - Meeting Name" (no checkbox)
+- Tasks: plain text like "Review API contract PR [insurance-management]"
+- ALWAYS use 12-hour time
+
+**`print_custom`** — Print any markdown content as a receipt.
+- Supports `**bold**`, `- [ ] checkboxes`, `- bullets`
+- Use for: meeting agendas, project checklists, notes, anything
+
 ### Session End
 Before ending, call `save_conversation_notes` with:
 - Summary of what was discussed/accomplished

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            font-size: 28px;
+            line-height: 1.4;
+            margin: 0;
+            padding: 30px 20px 60px 20px;
+            width: 576px;
+            box-sizing: border-box;
+            color: #000;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 15px;
+        }
+        .title {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .timestamp {
+            font-size: 18px;
+            color: #000;
+        }
+        .content { margin-top: 20px; }
+        .content div { margin: 4px 0; word-wrap: break-word; }
+        strong {
+            font-weight: bold;
+            font-size: 36px;
+            display: block;
+            margin: 12px 0 8px 0;
+            text-transform: uppercase;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 15px;
+            border-top: 2px solid #000;
+            text-align: center;
+            font-size: 14px;
+            color: #000;
+        }
+    </style>
+</head>
+<body>
+    {% if title %}
+    <div class="header">
+        <div class="title">{{ title }}</div>
+        <div class="timestamp">{{ timestamp }}</div>
+    </div>
+    {% endif %}
+    <div class="content">{{ content|safe }}</div>
+    <div class="footer">Printed {{ timestamp }}</div>
+</body>
+</html>

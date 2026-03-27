@@ -8,60 +8,37 @@ Run these in parallel:
 - `query_daily(date=today)` — get tasks from Kit's database
 - `gcal_list_events` for today — get calendar events (Google Calendar MCP)
 
-### 2. Format the Output
+### 2. Build the Task List
 
-Build a plain text checklist following this exact format:
+Combine events and tasks into a single array of strings for `print_daily_list`:
 
-```
-{Day of Week}
-{Month Day, Year}
-────────────────────────────────
+**Events** (no checkbox — informational):
+- Format: `"9:00 AM - Standup"`
+- Format: `"1:30 PM - Insurance Review"`
+- ALWAYS 12-hour time
 
-SCHEDULE
-· · · · · · · · · · · · · · · ·
-  {time}  {event title}
-  {time}  {event title}
+**Blank separator between events and tasks:**
+- Add an empty string `""` between the events section and tasks section
 
-TASKS
-· · · · · · · · · · · · · · · ·
-[ ] {task title} [{initiative}]
-[ ] {task title}
-[x] {completed task}
-
-────────────────────────────────
-```
-
-### Formatting Rules
-
-- **Time:** Always 12-hour format (9:00am, 1:30pm). Never 24-hour.
-- **Events:** Indented with time, NO checkboxes. Events are informational, not actionable.
-- **Tasks:** `[ ]` checkbox prefix. Tag with `[slug]` if linked to an initiative. `[x]` if already completed.
-- **Order:** Events sorted by time. Tasks sorted by urgency (ASAP first).
-- **Width:** Keep lines under 32 characters when possible (thermal paper is narrow). Wrap long titles if needed.
-- **No emoji.** Plain text only.
+**Tasks** (checkbox added by template):
+- Format: `"Review API contract PR [insurance-management]"`
+- Format: `"Respond to Akash on migration question"`
+- Tag with `[initiative-slug]` if linked
+- Sort by urgency (ASAP first)
 
 ### 3. Preview
 
-Show the formatted output to Brendan first. Ask "Send to printer?" before printing.
+Show the proposed list to Brendan. Ask "Send to printer?" before printing.
 
 ### 4. Print
 
-Pipe the formatted text to the print script:
+Call `print_daily_list(tasks=combined_list, date=today)`.
 
-```bash
-echo "{formatted_text}" | python3 /Users/brendan.roman/Programming/BriefCase/scripts/print_daily.py --stdin
-```
-
-Or for preview only (no actual printing):
-```bash
-echo "{formatted_text}" | python3 /Users/brendan.roman/Programming/BriefCase/scripts/print_daily.py --stdin --preview
-```
-
-The print script reads `settings.yaml` to determine whether to use SSH or direct printing.
+The tool handles rendering to HTML, converting to image, and sending to the network printer at 192.168.68.99.
 
 ### Edge Cases
 
-- **No tasks or events:** Print a simple header with "No tasks or events planned."
-- **Events only (no tasks):** Skip the TASKS section.
-- **Tasks only (no events):** Skip the SCHEDULE section.
-- **Past events:** Include them but don't flag them — the printed checklist is a reference, not a live tracker.
+- **No tasks or events:** Tell Brendan there's nothing to print.
+- **Events only:** Print just the events list.
+- **Tasks only:** Print just the tasks list.
+- **Printer offline:** The tool will return an error — suggest checking the printer connection.
