@@ -75,13 +75,17 @@ class ReceiptRenderer:
             from io import BytesIO
             import base64
 
+            from selenium.webdriver.chrome.service import Service
+            from webdriver_manager.chrome import ChromeDriverManager
+
             chrome_options = Options()
             chrome_options.add_argument('--headless')
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             chrome_options.add_argument(f'--window-size={width_px},10000')
 
-            driver = webdriver.Chrome(options=chrome_options)
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
             html_encoded = base64.b64encode(html.encode('utf-8')).decode('utf-8')
             driver.get(f"data:text/html;base64,{html_encoded}")
             screenshot = driver.get_screenshot_as_png()
