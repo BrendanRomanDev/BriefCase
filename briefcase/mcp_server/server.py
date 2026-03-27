@@ -46,6 +46,12 @@ PRINTING FORMAT RULES:
 - Work items: Tag with [initiative-slug]
 - DO NOT add manual checkbox characters — the template handles them
 
+BRAIN DUMP vs DAILY NOTES:
+- brain_dump is for LOOSE captures with no specific day — things to triage later.
+- plan_daily(notes=...) is for TIME-BOUND work tied to a specific day or sequence.
+- If the user describes work for Monday/Tuesday/etc, put it in daily notes, NOT brain dump.
+- When unsure, ASK: "Brain dump for later, or slot into [day]'s notes?"
+
 CRITICAL RULES:
 - Events live in Google Calendar, NOT the database.
 - The agent calls gcal_list_events separately and merges with DB data.
