@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.4.0"
+VERSION = "0.6.0"
 
 logger = logging.getLogger(__name__)
 
@@ -15,25 +15,31 @@ SERVER_INSTRUCTIONS = """Kit: Your Work Planning Companion
 
 CONVERSATION START CHECKLIST:
 1. gcal_list_events (next 14 days) - Google Calendar events
-2. get_forecast(days=14) - Initiative deadlines + inbox status + current time
+2. get_forecast(days=14) - Initiative deadlines + inbox status + targeted items + current time
 3. get_recent_activity(days=3) - Recent dailies and session context
-4. Read ~/.briefcase/user_profile.yaml - Role, team, projects
+4. get_triage_queue() - Pending captures from the Chrome extension (web clips, Google Chat messages). If count > 0, mention it in the greeting — do NOT auto-walk. Wait for the user to say "triage" before stepping through items.
+5. Read ~/.briefcase/user_profile.yaml - Role, team, projects
+6. Check for current week's rollup - If Monday/Tuesday and no rollup exists, generate with weekly_rollup()
 
 TOOL QUICK GUIDE:
-- brain_dump: Capture tasks, optionally link to initiative
-- get_capture_list: Query inbox, filter by initiative/status
+- brain_dump: Capture tasks, optionally link to initiative. target_week param for week-level scheduling. Accepts source, source_url, source_metadata for captures that came from elsewhere (e.g. Google Chat).
+- get_capture_list: Query inbox, filter by initiative/status/target_week. Items may carry source_url — render as clickable links back to origin when present.
 - complete_task / delete_task: Task lifecycle
-- manage_initiative: CRUD for projects/initiatives
+- get_triage_queue: List pending captures awaiting triage. Each item has source, source_url, content, metadata.
+- triage_item: Resolve a queue item into brain_dump / initiative / thrivenote / daily_note / discard. Source URL + metadata carry forward automatically on brain_dump and initiative destinations.
+- clear_triage_queue: Delete resolved items from the queue (history cleanup).
+- manage_initiative: CRUD for projects/initiatives. Create action accepts source fields for origins.
 - manage_initiative_members: Add/remove/list team members
 - plan_daily: Save daily task plan (calendar events handled by agent separately)
 - query_daily: Look up a day's task plan
-- get_forecast: DB-side forecast (deadlines, inbox, current time) - agent merges with gcal
+- get_forecast: DB-side forecast (deadlines, inbox, targeted items, current time) - agent merges with gcal
 - get_recent_activity: Recent dailies and session notes
 - file_meeting_notes: Paste notes → filed in Obsidian → summary + proposed actions
 - search_notes: Search Obsidian vault by keyword, scoped to initiative/date
 - get_initiative_status: Full status with DB + Obsidian notes + optional gh CLI
 - draft_status_update: Gather context for agent to draft stakeholder update
 - project_retro: Week-by-week retrospective with velocity trends
+- weekly_rollup: Generate weekly executive summary (meetings, decisions, work, look-ahead) → Obsidian
 - save_conversation_notes: Save session context at end of conversation
 - print_daily_list: Print daily checklist receipt (template adds checkboxes)
 - print_custom: Print any markdown content as a receipt
@@ -46,11 +52,34 @@ PRINTING FORMAT RULES:
 - Work items: Tag with [initiative-slug]
 - DO NOT add manual checkbox characters — the template handles them
 
-BRAIN DUMP vs DAILY NOTES:
+BRAIN DUMP vs DAILY NOTES vs TARGET WEEK:
 - brain_dump is for LOOSE captures with no specific day — things to triage later.
+- brain_dump with target_week (e.g. '2026-W15') is for items that should happen in a specific week but don't have an exact day. These surface in get_forecast and during daily planning for that week.
 - plan_daily(notes=...) is for TIME-BOUND work tied to a specific day or sequence.
 - If the user describes work for Monday/Tuesday/etc, put it in daily notes, NOT brain dump.
-- When unsure, ASK: "Brain dump for later, or slot into [day]'s notes?"
+- If the user says "next week" or "this week" without a specific day, use brain_dump with target_week.
+- When unsure, ASK: "Brain dump for later, target a specific week, or slot into [day]'s notes?"
+- When brain dumping action items from meetings or conversations, ALWAYS include a description with context: which meeting, who said it, why it matters, what depends on it. Titles are short and actionable. Descriptions give enough context to pick up the item cold.
+
+WEEKLY ROLLUP:
+- weekly_rollup generates an executive summary saved to ThriveNotes/weeklies/.
+- On Monday/Tuesday, if no rollup exists for the previous week, generate one before planning.
+- The rollup gathers: meeting notes from Obsidian, dailies, conversation notes, inbox activity.
+- Use it to brief the user on what happened last week and what's coming up.
+- Also available on-demand: "Roll up last week" or "Give me a summary of W14."
+
+TRIAGE QUEUE FLOW:
+- The Chrome extension POSTs captures to a local sidecar which writes to the triage_queue table.
+- At conversation start, get_triage_queue is called. If non-empty, mention count in greeting — do NOT auto-walk.
+- When the user says "triage" (or similar), walk items 1x1. For each item, surface source, source_url, content, and any metadata (sender, channel, thread preview). Ask the user what to do.
+- Decisions route via triage_item:
+  - brain_dump: creates inbox item, source_url + metadata carry forward automatically.
+  - initiative: creates new initiative, source_url + metadata carry forward.
+  - thrivenote: YOU file to the vault first (obey global ~/.claude/rules/thrive-notes.md — confirm placement, embed source_url in markdown body as "Source: [link](url)"), THEN call triage_item with action='thrivenote'.
+  - daily_note: YOU call plan_daily first, THEN triage_item action='daily_note'.
+  - discard / mark_resolved: just route the triage.
+- Never silently promote queue items. Every triage action is a user decision.
+- When rendering inbox items that carry source_url, include "[open in <source>]" link inline so the user can jump to origin.
 
 CRITICAL RULES:
 - Events live in Google Calendar, NOT the database.
@@ -58,6 +87,7 @@ CRITICAL RULES:
 - plan_daily stores TASKS only. Events are referenced, not duplicated.
 - get_forecast returns current time so the agent can determine past vs upcoming.
 - Never auto-create tasks from meeting notes. Always conversational triage.
+- Never silently triage queue items. Always walk the user through each decision.
 """
 
 
@@ -80,6 +110,21 @@ def _import_brain_dump_tools():
     from briefcase.mcp_server.tools.delete_task import (
         delete_task, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, delete_task
+
+
+def _import_triage_tools():
+    """Import triage queue tools (inbound captures from Chrome extension)."""
+    from briefcase.mcp_server.tools.get_triage_queue import (
+        get_triage_queue, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, get_triage_queue
+
+    from briefcase.mcp_server.tools.triage_item import (
+        triage_item, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, triage_item
+
+    from briefcase.mcp_server.tools.clear_triage_queue import (
+        clear_triage_queue, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, clear_triage_queue
 
 
 def _import_initiative_tools():
@@ -137,6 +182,10 @@ def _import_reporting_tools():
         project_retro, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, project_retro
 
+    from briefcase.mcp_server.tools.weekly_rollup import (
+        weekly_rollup, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, weekly_rollup
+
 
 def _import_printing_tools():
     """Import printing tools (behind features.printing flag)."""
@@ -174,6 +223,7 @@ class BriefCaseServer:
         )
 
         self._register_tool_batch(_import_brain_dump_tools())
+        self._register_tool_batch(_import_triage_tools())
         self._register_tool_batch(_import_initiative_tools())
         self._register_tool_batch(_import_daily_tools())
         self._register_tool_batch(_import_meeting_tools())

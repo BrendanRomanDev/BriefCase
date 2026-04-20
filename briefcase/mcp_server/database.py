@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS inbox (
     urgency INTEGER DEFAULT 1,
     status TEXT DEFAULT 'capture',
     initiative_id INTEGER,
+    target_week TEXT,
+    source TEXT,
+    source_url TEXT,
+    source_metadata TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     printed_at TIMESTAMP,
     scheduled_at TIMESTAMP,
@@ -36,8 +40,24 @@ CREATE TABLE IF NOT EXISTS initiatives (
     deadline DATE,
     tags TEXT,
     repo_path TEXT,
+    source TEXT,
+    source_url TEXT,
+    source_metadata TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS triage_queue (
+    id INTEGER PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_url TEXT,
+    title TEXT,
+    content TEXT NOT NULL,
+    metadata TEXT,
+    status TEXT DEFAULT 'pending',
+    resolution TEXT,
+    resolved_at TIMESTAMP,
+    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS initiative_members (
@@ -81,30 +101,60 @@ def get_db_connection(db_path: str = None) -> sqlite3.Connection:
 
 
 def init_database(db_path: str = None):
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist, then run migrations."""
     conn = get_db_connection(db_path)
     conn.executescript(SCHEMA_SQL)
+    _migrate(conn)
     conn.close()
+
+
+def _migrate(conn):
+    """Run schema migrations for existing databases."""
+    inbox_columns = {row[1] for row in conn.execute("PRAGMA table_info(inbox)").fetchall()}
+    if 'target_week' not in inbox_columns:
+        conn.execute("ALTER TABLE inbox ADD COLUMN target_week TEXT")
+    if 'source' not in inbox_columns:
+        conn.execute("ALTER TABLE inbox ADD COLUMN source TEXT")
+    if 'source_url' not in inbox_columns:
+        conn.execute("ALTER TABLE inbox ADD COLUMN source_url TEXT")
+    if 'source_metadata' not in inbox_columns:
+        conn.execute("ALTER TABLE inbox ADD COLUMN source_metadata TEXT")
+
+    initiative_columns = {row[1] for row in conn.execute("PRAGMA table_info(initiatives)").fetchall()}
+    if 'source' not in initiative_columns:
+        conn.execute("ALTER TABLE initiatives ADD COLUMN source TEXT")
+    if 'source_url' not in initiative_columns:
+        conn.execute("ALTER TABLE initiatives ADD COLUMN source_url TEXT")
+    if 'source_metadata' not in initiative_columns:
+        conn.execute("ALTER TABLE initiatives ADD COLUMN source_metadata TEXT")
+
+    conn.commit()
 
 
 # --- Inbox CRUD ---
 
 def create_inbox_item(conn, title, description=None, complexity=None,
-                      urgency=None, initiative_id=None, status='capture') -> int:
+                      urgency=None, initiative_id=None, status='capture',
+                      target_week=None, source=None, source_url=None,
+                      source_metadata=None) -> int:
     """Create inbox item, return its ID."""
+    if source_metadata is not None and not isinstance(source_metadata, str):
+        source_metadata = json.dumps(source_metadata)
     cursor = conn.execute(
         """INSERT INTO inbox (title, description, complexity, urgency,
-           initiative_id, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+           initiative_id, status, target_week, source, source_url,
+           source_metadata, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (title, description, complexity or 1, urgency or 1,
-         initiative_id, status, datetime.now(UTC).isoformat())
+         initiative_id, status, target_week, source, source_url,
+         source_metadata, datetime.now(UTC).isoformat())
     )
     conn.commit()
     return cursor.lastrowid
 
 
 def get_inbox_items(conn, initiative_slug=None, status=None,
-                    exclude_completed=True) -> list:
+                    exclude_completed=True, target_week=None) -> list:
     """Query inbox items with optional filters."""
     query = "SELECT i.*, init.slug as initiative_slug FROM inbox i"
     query += " LEFT JOIN initiatives init ON i.initiative_id = init.id"
@@ -119,6 +169,9 @@ def get_inbox_items(conn, initiative_slug=None, status=None,
     if initiative_slug:
         conditions.append("init.slug = ?")
         params.append(initiative_slug)
+    if target_week:
+        conditions.append("i.target_week = ?")
+        params.append(target_week)
 
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
@@ -137,6 +190,27 @@ def complete_inbox_item(conn, item_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+def get_inbox_items_by_week_range(conn, week_start: str, week_end: str,
+                                  exclude_completed=True) -> list:
+    """Get inbox items whose target_week falls within a range (inclusive).
+
+    week_start/week_end are ISO week strings like '2026-W14'.
+    """
+    query = "SELECT i.*, init.slug as initiative_slug FROM inbox i"
+    query += " LEFT JOIN initiatives init ON i.initiative_id = init.id"
+    conditions = ["i.target_week IS NOT NULL",
+                  "i.target_week >= ?", "i.target_week <= ?"]
+    params = [week_start, week_end]
+
+    if exclude_completed:
+        conditions.append("i.completed_at IS NULL")
+
+    query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY i.target_week ASC, i.urgency DESC"
+
+    return [dict(row) for row in conn.execute(query, params).fetchall()]
+
+
 def delete_inbox_item(conn, item_id: int) -> bool:
     """Permanently delete an inbox item. Returns True if found."""
     cursor = conn.execute("DELETE FROM inbox WHERE id = ?", (item_id,))
@@ -147,16 +221,21 @@ def delete_inbox_item(conn, item_id: int) -> bool:
 # --- Initiative CRUD ---
 
 def create_initiative(conn, name, slug, description=None, deadline=None,
-                      tags=None, repo_path=None, obsidian_folder=None) -> int:
+                      tags=None, repo_path=None, obsidian_folder=None,
+                      source=None, source_url=None, source_metadata=None) -> int:
     """Create an initiative, return its ID."""
     now = datetime.now(UTC).isoformat()
+    if source_metadata is not None and not isinstance(source_metadata, str):
+        source_metadata = json.dumps(source_metadata)
     cursor = conn.execute(
         """INSERT INTO initiatives (name, slug, description, deadline, tags,
-           repo_path, obsidian_folder, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           repo_path, obsidian_folder, source, source_url, source_metadata,
+           created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (name, slug, description, deadline,
          json.dumps(tags) if tags else None,
-         repo_path, obsidian_folder or f"Projects/{slug}", now, now)
+         repo_path, obsidian_folder or f"Projects/{slug}",
+         source, source_url, source_metadata, now, now)
     )
     conn.commit()
     return cursor.lastrowid
@@ -181,16 +260,52 @@ def get_all_initiatives(conn, status: str = None) -> list:
     return [dict(row) for row in conn.execute(query, params).fetchall()]
 
 
-def update_initiative(conn, slug: str, **kwargs) -> bool:
-    """Update initiative fields. Returns True if found."""
+def update_initiative(conn, slug: str, tags_mode: str = 'append', **kwargs) -> bool:
+    """Update initiative fields. Returns True if found.
+
+    tags_mode controls how `tags` is applied when provided:
+      - 'append' (default): union of existing + new tags, de-duplicated,
+        order preserved (existing first, then new).
+      - 'replace': overwrite existing tags entirely with the given list.
+      - 'remove': subtract the given tags from existing.
+    """
     allowed = {'name', 'description', 'status', 'deadline', 'tags',
                'repo_path', 'obsidian_folder'}
     updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
     if not updates:
         return False
 
-    if 'tags' in updates and isinstance(updates['tags'], list):
-        updates['tags'] = json.dumps(updates['tags'])
+    if 'tags' in updates:
+        new_tags = updates['tags'] if isinstance(updates['tags'], list) else []
+
+        if tags_mode in ('append', 'remove'):
+            row = conn.execute(
+                "SELECT tags FROM initiatives WHERE slug = ?", (slug,)
+            ).fetchone()
+            if row is None:
+                return False
+            existing_tags = []
+            if row['tags']:
+                try:
+                    existing_tags = json.loads(row['tags'])
+                    if not isinstance(existing_tags, list):
+                        existing_tags = []
+                except (json.JSONDecodeError, TypeError):
+                    existing_tags = []
+
+            if tags_mode == 'append':
+                merged = list(existing_tags)
+                for t in new_tags:
+                    if t not in merged:
+                        merged.append(t)
+                updates['tags'] = json.dumps(merged)
+            else:  # remove
+                remaining = [t for t in existing_tags if t not in new_tags]
+                updates['tags'] = json.dumps(remaining)
+        elif tags_mode == 'replace':
+            updates['tags'] = json.dumps(new_tags)
+        else:
+            raise ValueError(f"Unknown tags_mode: {tags_mode}")
 
     updates['updated_at'] = datetime.now(UTC).isoformat()
 
@@ -320,6 +435,97 @@ def get_recent_conversation_notes(conn, days: int = 3) -> list:
     return results
 
 
+# --- Triage Queue ---
+
+def create_triage_item(conn, source: str, content: str, source_url: str = None,
+                       title: str = None, metadata=None) -> int:
+    """Create a triage queue item, return its ID."""
+    if metadata is not None and not isinstance(metadata, str):
+        metadata = json.dumps(metadata)
+    cursor = conn.execute(
+        """INSERT INTO triage_queue (source, source_url, title, content,
+           metadata, captured_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (source, source_url, title, content, metadata,
+         datetime.now(UTC).isoformat())
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_triage_items(conn, status: str = 'pending', limit: int = None) -> list:
+    """Query triage queue items, optionally filtered by status."""
+    query = "SELECT * FROM triage_queue"
+    params = []
+    if status:
+        query += " WHERE status = ?"
+        params.append(status)
+    query += " ORDER BY captured_at ASC"
+    if limit:
+        query += " LIMIT ?"
+        params.append(limit)
+
+    rows = conn.execute(query, params).fetchall()
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get('metadata'):
+            try:
+                d['metadata'] = json.loads(d['metadata'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        results.append(d)
+    return results
+
+
+def get_triage_item(conn, item_id: int) -> Optional[dict]:
+    """Get a single triage queue item by ID."""
+    row = conn.execute(
+        "SELECT * FROM triage_queue WHERE id = ?", (item_id,)
+    ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    if d.get('metadata'):
+        try:
+            d['metadata'] = json.loads(d['metadata'])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return d
+
+
+def resolve_triage_item(conn, item_id: int, resolution: str) -> bool:
+    """Mark a triage queue item as resolved with a resolution label.
+
+    resolution examples: 'brain_dump', 'initiative', 'thrivenote',
+    'daily_note', 'discarded', 'external'.
+    Returns True if the item existed.
+    """
+    cursor = conn.execute(
+        """UPDATE triage_queue
+           SET status = 'resolved', resolution = ?, resolved_at = ?
+           WHERE id = ? AND status = 'pending'""",
+        (resolution, datetime.now(UTC).isoformat(), item_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def clear_resolved_triage_items(conn) -> int:
+    """Delete all resolved triage queue items. Returns count deleted."""
+    cursor = conn.execute("DELETE FROM triage_queue WHERE status = 'resolved'")
+    conn.commit()
+    return cursor.rowcount
+
+
+def get_pending_triage_count(conn) -> int:
+    """Count pending triage queue items. Cheap check for startup checklists."""
+    row = conn.execute(
+        "SELECT COUNT(*) as n FROM triage_queue WHERE status = 'pending'"
+    ).fetchone()
+    return row['n'] if row else 0
+
+
 # --- Backup ---
 
 def backup_database(db_path: str = None, backup_dir: str = None,
@@ -340,7 +546,8 @@ def backup_database(db_path: str = None, backup_dir: str = None,
 
     # Also export as JSON
     conn = get_db_connection(db_path)
-    tables = ['inbox', 'initiatives', 'initiative_members', 'dailies', 'conversation_notes']
+    tables = ['inbox', 'initiatives', 'initiative_members', 'dailies',
+              'conversation_notes', 'triage_queue']
     export = {}
     for table in tables:
         rows = conn.execute(f"SELECT * FROM {table}").fetchall()

@@ -6,8 +6,7 @@ from briefcase.mcp_server.database import (
     get_db_connection, create_initiative, get_initiative_by_slug,
     get_all_initiatives, update_initiative
 )
-from briefcase.mcp_server.config import load_settings
-from pathlib import Path
+from briefcase.mcp_server.obsidian import scaffold_initiative_folder
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,11 @@ async def manage_initiative(
     tags: Optional[list] = None,
     repo_path: Optional[str] = None,
     status: Optional[str] = None,
-    create_obsidian_folder: bool = True
+    create_obsidian_folder: bool = True,
+    tags_mode: str = 'append',
+    source: Optional[str] = None,
+    source_url: Optional[str] = None,
+    source_metadata: Optional[dict] = None
 ) -> dict:
     """CRUD for initiatives."""
     try:
@@ -38,22 +41,15 @@ async def manage_initiative(
 
             initiative_id = create_initiative(
                 conn, name=name, slug=slug, description=description,
-                deadline=deadline, tags=tags, repo_path=repo_path
+                deadline=deadline, tags=tags, repo_path=repo_path,
+                source=source, source_url=source_url,
+                source_metadata=source_metadata
             )
 
             result = {"status": "success", "message": f"Created initiative: {name}", "id": initiative_id}
 
             if create_obsidian_folder:
-                settings = load_settings()
-                vault = Path(settings['obsidian_vault']).expanduser()
-                project_dir = vault / "Projects" / slug
-                meetings_dir = project_dir / "meetings"
-                meetings_dir.mkdir(parents=True, exist_ok=True)
-
-                readme = project_dir / "README.md"
-                if not readme.exists():
-                    readme.write_text(f"# {name}\n\n{description or ''}\n")
-
+                project_dir = scaffold_initiative_folder(slug, name, description)
                 result["obsidian_folder"] = str(project_dir)
 
             conn.close()
@@ -78,7 +74,12 @@ async def manage_initiative(
             if status is not None:
                 updates['status'] = status
 
-            found = update_initiative(conn, slug, **updates)
+            if tags_mode not in ('append', 'replace', 'remove'):
+                conn.close()
+                return {"status": "error",
+                        "message": f"tags_mode must be append, replace, or remove (got '{tags_mode}')"}
+
+            found = update_initiative(conn, slug, tags_mode=tags_mode, **updates)
             conn.close()
 
             if not found:
@@ -137,7 +138,15 @@ TOOL_SCHEMA = {
         "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
         "repo_path": {"type": "string", "description": "Path to git repo"},
         "status": {"type": "string", "description": "Status filter (for list) or new status (for update)"},
-        "create_obsidian_folder": {"type": "boolean", "description": "Create Obsidian folder structure on create (default true)"}
+        "create_obsidian_folder": {"type": "boolean", "description": "Create Obsidian folder structure on create (default true)"},
+        "tags_mode": {"type": "string", "enum": ["append", "replace", "remove"],
+                      "description": "How to apply 'tags' on update. 'append' (default) merges with existing and dedupes. 'replace' overwrites. 'remove' subtracts."},
+        "source": {"type": "string",
+                   "description": "Where this initiative origin came from (e.g. 'google_chat', 'web_clip'). Only applies on create."},
+        "source_url": {"type": "string",
+                       "description": "Permalink back to the origin (e.g. the Google Chat message that prompted this initiative). Only applies on create."},
+        "source_metadata": {"type": "object",
+                            "description": "Free-form metadata about the source. Only applies on create."}
     },
     "required": ["action"]
 }

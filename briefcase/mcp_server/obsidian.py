@@ -191,6 +191,25 @@ def build_meeting_note(title: str, date: str, initiative_slug: Optional[str],
     return '\n'.join(sections)
 
 
+def scaffold_initiative_folder(slug: str, name: str,
+                               description: Optional[str] = None) -> Path:
+    """Create Projects/<slug>/ with README.md and meetings/ subfolder.
+
+    Idempotent: safe to call on an existing folder (will not overwrite
+    an existing README). Returns the absolute project directory path.
+    """
+    vault = get_vault_path()
+    project_dir = vault / "Projects" / slug
+    meetings_dir = project_dir / "meetings"
+    meetings_dir.mkdir(parents=True, exist_ok=True)
+
+    readme = project_dir / "README.md"
+    if not readme.exists():
+        readme.write_text(f"# {name}\n\n{description or ''}\n")
+
+    return project_dir
+
+
 def get_initiative_folder(slug: str) -> str:
     """Get the vault-relative path for an initiative's folder."""
     return f"Projects/{slug}"
