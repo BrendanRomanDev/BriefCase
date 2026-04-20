@@ -13,3 +13,9 @@ printer:
   port: 9100
   width_mm: 72
   width_px: 576
+
+# Sidecar HTTP bridge (used by the Chrome extension).
+# See briefcase/sidecar/README.md. Override the port here or via
+# the BRIEFCASE_SIDECAR_PORT env variable.
+sidecar:
+  port: 8989

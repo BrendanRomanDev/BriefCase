@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BriefCase — Options</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    max-width: 640px;
+    margin: 40px auto;
+    padding: 0 24px;
+    color: #222;
+    background: #fafafa;
+  }
+  h1 { margin-bottom: 4px; font-size: 22px; }
+  .subhead { color: #666; margin-top: 0; margin-bottom: 32px; font-size: 14px; }
+  label {
+    display: block;
+    margin-top: 20px;
+    margin-bottom: 6px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+  input[type="text"], input[type="password"] {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+  }
+  .help {
+    color: #666;
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .row {
+    display: flex;
+    gap: 12px;
+    margin-top: 28px;
+    align-items: center;
+  }
+  button {
+    padding: 9px 18px;
+    border: none;
+    background: #2b6cb0;
+    color: white;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: #e2e8f0;
+    color: #222;
+  }
+  button:hover { filter: brightness(1.05); }
+  .status {
+    margin-left: auto;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .status.ok { color: #2f855a; }
+  .status.err { color: #c53030; }
+  .status.info { color: #666; }
+  .pane {
+    margin-top: 32px;
+    padding: 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: white;
+    font-size: 13px;
+  }
+  .pane h2 { margin: 0 0 8px 0; font-size: 15px; }
+  code { background: #f1f5f9; padding: 2px 5px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>BriefCase</h1>
+  <p class="subhead">Point the extension at your local sidecar and paste your auth token.</p>
+
+  <label for="sidecarUrl">Sidecar URL</label>
+  <input type="text" id="sidecarUrl" placeholder="http://127.0.0.1:8989" spellcheck="false" />
+  <div class="help">Default is <code>http://127.0.0.1:8989</code>. Change only if you customized the port in <code>settings.yaml</code>.</div>
+
+  <label for="authToken">Auth token</label>
+  <input type="password" id="authToken" placeholder="Paste the contents of ~/.briefcase/sidecar_token" spellcheck="false" autocomplete="off" />
+  <div class="help">Run <code>cat ~/.briefcase/sidecar_token</code> in a terminal to retrieve it. Rotating: delete the file and re-run <code>install.sh</code>.</div>
+
+  <div class="row">
+    <button id="save">Save</button>
+    <button id="test" class="secondary">Test connection</button>
+    <div id="status" class="status info"></div>
+  </div>
+
+  <div class="pane">
+    <h2>How to use</h2>
+    <ol>
+      <li>Right-click selected text on any page and choose <strong>BriefCase → Send selection to BriefCase</strong>.</li>
+      <li>Next time you open Kit, it will see the new item and offer to triage it.</li>
+      <li>You decide per-item: brain dump, new initiative, ThriveNote, daily note, or discard.</li>
+    </ol>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
