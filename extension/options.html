@@ -3,35 +3,50 @@
 <head>
 <meta charset="UTF-8">
 <title>BriefCase — Options</title>
+<link rel="stylesheet" href="themes.css">
+<script src="theme.js"></script>
 <style>
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     max-width: 640px;
     margin: 40px auto;
-    padding: 0 24px;
-    color: #222;
-    background: #fafafa;
+    padding: 0 24px 60px;
+    color: var(--ink);
+    background: var(--bg);
+    transition: background 120ms ease, color 120ms ease;
   }
-  h1 { margin-bottom: 4px; font-size: 22px; }
-  .subhead { color: #666; margin-top: 0; margin-bottom: 32px; font-size: 14px; }
+  h1 { margin-bottom: 4px; font-size: 22px; color: var(--ink); }
+  .subhead { color: var(--muted); margin-top: 0; margin-bottom: 32px; font-size: 14px; }
   label {
     display: block;
     margin-top: 20px;
     margin-bottom: 6px;
     font-weight: 600;
     font-size: 13px;
+    color: var(--ink);
   }
-  input[type="text"], input[type="password"] {
+  input[type="text"], input[type="password"], select {
     width: 100%;
     box-sizing: border-box;
     padding: 10px 12px;
-    border: 1px solid #ccc;
+    border: 1px solid var(--border);
     border-radius: 6px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 13px;
+    background: var(--pane);
+    color: var(--ink);
+  }
+  select {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    cursor: pointer;
+  }
+  input:focus, select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+    border-color: var(--accent);
   }
   .help {
-    color: #666;
+    color: var(--muted);
     font-size: 12px;
     margin-top: 4px;
   }
@@ -44,36 +59,71 @@
   button {
     padding: 9px 18px;
     border: none;
-    background: #2b6cb0;
-    color: white;
+    background: var(--accent);
+    color: var(--bg);
     border-radius: 6px;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
   }
   button.secondary {
-    background: #e2e8f0;
-    color: #222;
+    background: var(--pane);
+    color: var(--ink);
+    border: 1px solid var(--border);
   }
-  button:hover { filter: brightness(1.05); }
+  button:hover { filter: brightness(1.08); }
   .status {
     margin-left: auto;
     font-size: 13px;
     font-weight: 500;
   }
-  .status.ok { color: #2f855a; }
-  .status.err { color: #c53030; }
-  .status.info { color: #666; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .status.info { color: var(--muted); }
   .pane {
     margin-top: 32px;
     padding: 16px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--border);
     border-radius: 8px;
-    background: white;
+    background: var(--pane);
     font-size: 13px;
+    color: var(--ink);
   }
-  .pane h2 { margin: 0 0 8px 0; font-size: 15px; }
-  code { background: #f1f5f9; padding: 2px 5px; border-radius: 3px; font-size: 12px; }
+  .pane h2 { margin: 0 0 8px 0; font-size: 15px; color: var(--ink); }
+  .pane p, .pane li, .pane ol { color: var(--ink); }
+  code {
+    background: var(--bg);
+    color: var(--ink);
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+  }
+  .theme-block {
+    margin-top: 32px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--pane);
+  }
+  .theme-block h2 { margin: 0 0 8px 0; font-size: 15px; }
+  .theme-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 12px;
+  }
+  .swatches {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .swatch {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+  }
 </style>
 </head>
 <body>
@@ -94,13 +144,26 @@
     <div id="status" class="status info"></div>
   </div>
 
+  <div class="theme-block">
+    <h2>Theme</h2>
+    <p class="help" style="margin-top: 0;">Applied instantly across the compose popup, options page, and toolbar popup.</p>
+    <div class="theme-row">
+      <label for="themeSelect" style="margin: 0; flex: 0 0 auto;">Color theme</label>
+      <select id="themeSelect" style="flex: 1;"></select>
+      <div class="swatches" id="themeSwatches"></div>
+    </div>
+  </div>
+
   <div class="pane">
     <h2>How to use</h2>
     <ol>
-      <li>Right-click selected text on any page and choose <strong>BriefCase → Send selection to BriefCase</strong>.</li>
+      <li>Right-click selected text on any page and choose <strong>BriefCase → Send to BriefCase...</strong>.</li>
+      <li>Edit content, paste a specific URL if you have one, check what this needs (Jira ticket / code review / search around / calendar), add context, send.</li>
       <li>Next time you open Kit, it will see the new item and offer to triage it.</li>
       <li>You decide per-item: brain dump, new initiative, ThriveNote, daily note, or discard.</li>
     </ol>
+    <h2 style="margin-top: 18px;">Keyboard shortcut</h2>
+    <p>Set a shortcut at <code>chrome://extensions/shortcuts</code> to open the compose popup directly from a selection — useful on pages like Google Docs that hijack right-click.</p>
   </div>
 
   <script src="options.js"></script>

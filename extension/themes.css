@@ -1,0 +1,201 @@
+/* BriefCase themes.
+ *
+ * Each theme defines a full set of CSS variables. Selected via
+ * <html data-theme="..."> set by theme.js on page load.
+ *
+ * Variables every theme must define:
+ *   --ink         primary text color
+ *   --muted       secondary text / labels / hints
+ *   --border      borders + dividers
+ *   --accent      buttons, focus ring, active highlight
+ *   --bg          page background
+ *   --pane        card/input background (slightly different from bg)
+ *   --err         error / destructive
+ *   --ok          success
+ *   --warn        warnings / unverified state
+ */
+
+/* ------------------------ Light (default) ------------------------ */
+:root,
+[data-theme="light"] {
+  --ink: #1a202c;
+  --muted: #64748b;
+  --border: #cbd5e1;
+  --accent: #2b6cb0;
+  --bg: #fafafa;
+  --pane: #ffffff;
+  --err: #c53030;
+  --ok: #2f855a;
+  --warn: #b7791f;
+}
+
+/* ------------------------ Dark ------------------------ */
+[data-theme="dark"] {
+  --ink: #e6e8eb;
+  --muted: #94a3b8;
+  --border: #2d3748;
+  --accent: #63b3ed;
+  --bg: #0f1419;
+  --pane: #1a202c;
+  --err: #fc8181;
+  --ok: #68d391;
+  --warn: #f6ad55;
+}
+
+/* ------------------------ System (follows OS) ------------------------ */
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --ink: #e6e8eb;
+    --muted: #94a3b8;
+    --border: #2d3748;
+    --accent: #63b3ed;
+    --bg: #0f1419;
+    --pane: #1a202c;
+    --err: #fc8181;
+    --ok: #68d391;
+    --warn: #f6ad55;
+  }
+}
+@media (prefers-color-scheme: light) {
+  [data-theme="system"] {
+    --ink: #1a202c;
+    --muted: #64748b;
+    --border: #cbd5e1;
+    --accent: #2b6cb0;
+    --bg: #fafafa;
+    --pane: #ffffff;
+    --err: #c53030;
+    --ok: #2f855a;
+    --warn: #b7791f;
+  }
+}
+
+/* ------------------------ Sepia (low-strain reading) ------------------------ */
+[data-theme="sepia"] {
+  --ink: #433422;
+  --muted: #8b7355;
+  --border: #d8c9b0;
+  --accent: #a0522d;
+  --bg: #f4ecd8;
+  --pane: #faf3e0;
+  --err: #a52a2a;
+  --ok: #6b8e23;
+  --warn: #b8860b;
+}
+
+/* ------------------------ Solarized Light ------------------------ */
+[data-theme="solarized-light"] {
+  --ink: #586e75;
+  --muted: #93a1a1;
+  --border: #93a1a1;
+  --accent: #268bd2;
+  --bg: #fdf6e3;
+  --pane: #eee8d5;
+  --err: #dc322f;
+  --ok: #859900;
+  --warn: #b58900;
+}
+
+/* ------------------------ Solarized Dark ------------------------ */
+[data-theme="solarized-dark"] {
+  --ink: #93a1a1;
+  --muted: #586e75;
+  --border: #073642;
+  --accent: #268bd2;
+  --bg: #002b36;
+  --pane: #073642;
+  --err: #dc322f;
+  --ok: #859900;
+  --warn: #b58900;
+}
+
+/* ------------------------ Nord ------------------------ */
+[data-theme="nord"] {
+  --ink: #eceff4;
+  --muted: #8593a4;
+  --border: #3b4252;
+  --accent: #88c0d0;
+  --bg: #2e3440;
+  --pane: #3b4252;
+  --err: #bf616a;
+  --ok: #a3be8c;
+  --warn: #ebcb8b;
+}
+
+/* ------------------------ Dracula ------------------------ */
+[data-theme="dracula"] {
+  --ink: #f8f8f2;
+  --muted: #6272a4;
+  --border: #44475a;
+  --accent: #bd93f9;
+  --bg: #282a36;
+  --pane: #44475a;
+  --err: #ff5555;
+  --ok: #50fa7b;
+  --warn: #f1fa8c;
+}
+
+/* ------------------------ Gruvbox Dark ------------------------ */
+[data-theme="gruvbox-dark"] {
+  --ink: #ebdbb2;
+  --muted: #a89984;
+  --border: #504945;
+  --accent: #fabd2f;
+  --bg: #282828;
+  --pane: #3c3836;
+  --err: #fb4934;
+  --ok: #b8bb26;
+  --warn: #d79921;
+}
+
+/* ------------------------ Tokyo Night ------------------------ */
+[data-theme="tokyo-night"] {
+  --ink: #c0caf5;
+  --muted: #565f89;
+  --border: #2a2f41;
+  --accent: #7aa2f7;
+  --bg: #1a1b26;
+  --pane: #24283b;
+  --err: #f7768e;
+  --ok: #9ece6a;
+  --warn: #e0af68;
+}
+
+/* ------------------------ Catppuccin Latte (light) ------------------------ */
+[data-theme="catppuccin-latte"] {
+  --ink: #4c4f69;
+  --muted: #6c6f85;
+  --border: #ccd0da;
+  --accent: #1e66f5;
+  --bg: #eff1f5;
+  --pane: #ffffff;
+  --err: #d20f39;
+  --ok: #40a02b;
+  --warn: #df8e1d;
+}
+
+/* ------------------------ Catppuccin Mocha (dark) ------------------------ */
+[data-theme="catppuccin-mocha"] {
+  --ink: #cdd6f4;
+  --muted: #7f849c;
+  --border: #313244;
+  --accent: #89b4fa;
+  --bg: #1e1e2e;
+  --pane: #313244;
+  --err: #f38ba8;
+  --ok: #a6e3a1;
+  --warn: #f9e2af;
+}
+
+/* ------------------------ High Contrast ------------------------ */
+[data-theme="high-contrast"] {
+  --ink: #ffffff;
+  --muted: #cccccc;
+  --border: #ffffff;
+  --accent: #ffff00;
+  --bg: #000000;
+  --pane: #000000;
+  --err: #ff5555;
+  --ok: #55ff55;
+  --warn: #ffaa00;
+}

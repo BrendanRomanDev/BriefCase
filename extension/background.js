@@ -1,17 +1,18 @@
 // BriefCase Chrome extension — service worker.
 //
-// Registers right-click context menus and forwards captures to the local sidecar.
-// Configure the sidecar URL and auth token on the options page.
+// All captures go through the compose popup (right-click menu or keyboard
+// shortcut). The popup lets you edit the content, override the source URL
+// (e.g. paste a specific Google Chat message permalink), and add context
+// beneath a divider before sending.
 
 const DEFAULT_SIDECAR_URL = "http://127.0.0.1:8989";
 
-const MENU_ROOT = "briefcase-root";
-const MENU_SEND_SELECTION = "briefcase-send-selection";
-const MENU_SEND_PAGE = "briefcase-send-page";
-const MENU_SEND_LINK = "briefcase-send-link";
-const MENU_SEND_WITH_CONTEXT = "briefcase-send-with-context";
+const MENU_SEND = "briefcase-send";
 
 const PENDING_CAPTURE_KEY = "pendingCapture";
+
+const COMPOSE_WIDTH = 660;
+const COMPOSE_HEIGHT = 760;
 
 // ---- Lifecycle ----
 
@@ -27,43 +28,8 @@ chrome.runtime.onStartup.addListener(() => {
 function registerMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
-      id: MENU_ROOT,
-      title: "BriefCase",
-      contexts: ["selection", "page", "link"],
-    });
-
-    chrome.contextMenus.create({
-      id: MENU_SEND_SELECTION,
-      parentId: MENU_ROOT,
-      title: "Send selection to BriefCase",
-      contexts: ["selection"],
-    });
-
-    chrome.contextMenus.create({
-      id: MENU_SEND_PAGE,
-      parentId: MENU_ROOT,
-      title: "Send this page to BriefCase",
-      contexts: ["page"],
-    });
-
-    chrome.contextMenus.create({
-      id: MENU_SEND_LINK,
-      parentId: MENU_ROOT,
-      title: "Send this link to BriefCase",
-      contexts: ["link"],
-    });
-
-    chrome.contextMenus.create({
-      id: "briefcase-separator",
-      parentId: MENU_ROOT,
-      type: "separator",
-      contexts: ["selection", "page", "link"],
-    });
-
-    chrome.contextMenus.create({
-      id: MENU_SEND_WITH_CONTEXT,
-      parentId: MENU_ROOT,
-      title: "Send with context...",
+      id: MENU_SEND,
+      title: "Send to BriefCase...",
       contexts: ["selection", "page", "link"],
     });
   });
@@ -73,107 +39,109 @@ function registerMenus() {
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   try {
-    if (info.menuItemId === MENU_SEND_WITH_CONTEXT) {
-      await openComposeWindow(info, tab);
-      return;
+    if (info.menuItemId === MENU_SEND) {
+      await openComposeWindow({
+        selectionText: info.selectionText || null,
+        linkUrl: info.linkUrl || null,
+        frameUrl: info.frameUrl || null,
+        pageUrl: info.pageUrl || tab?.url || null,
+        tab,
+      });
     }
-    const clip = buildClip(info, tab);
-    if (!clip) return;
-    const result = await postClip(clip);
-    await notify(
-      "Sent to BriefCase",
-      `Item #${result.triage_item_id} queued. Walk through it next time you open Kit.`
-    );
   } catch (err) {
-    console.error("BriefCase: capture failed", err);
+    console.error("BriefCase: menu capture failed", err);
+    await notify("BriefCase error", String(err.message || err));
+  }
+});
+
+// ---- Keyboard shortcut ----
+//
+// Configure the binding at chrome://extensions/shortcuts.
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== "open_compose") return;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) return;
+
+    let selectionText = null;
+    try {
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => window.getSelection()?.toString() || "",
+      });
+      selectionText = (result?.result || "").trim() || null;
+    } catch (err) {
+      // Some pages (chrome://, web store) block scripting. Continue without selection.
+      console.warn("BriefCase: could not read selection", err);
+    }
+
+    await openComposeWindow({
+      selectionText,
+      linkUrl: null,
+      frameUrl: null,
+      pageUrl: tab.url || null,
+      tab,
+    });
+  } catch (err) {
+    console.error("BriefCase: hotkey capture failed", err);
     await notify("BriefCase error", String(err.message || err));
   }
 });
 
 // ---- Compose popup ----
 
-async function openComposeWindow(info, tab) {
-  // Build the base clip exactly the same way as the one-shot path.
-  // Prefer selection context if text is selected, then link, then page.
-  let effectiveMenuId = MENU_SEND_PAGE;
-  if (info.selectionText) {
-    effectiveMenuId = MENU_SEND_SELECTION;
-  } else if (info.linkUrl) {
-    effectiveMenuId = MENU_SEND_LINK;
-  }
-  const baseClip = buildClip({ ...info, menuItemId: effectiveMenuId }, tab);
-  if (!baseClip) return;
+async function openComposeWindow({ selectionText, linkUrl, frameUrl, pageUrl, tab }) {
+  const pageTitle = tab?.title || null;
 
-  const capture_type =
-    effectiveMenuId === MENU_SEND_SELECTION
-      ? "selection_with_context"
-      : effectiveMenuId === MENU_SEND_LINK
-      ? "link_with_context"
-      : "page_with_context";
+  // Decide effective capture type based on what's available.
+  let capture_type = "page_with_context";
+  let initial_content = pageTitle || pageUrl || "";
+  let initial_source_url = pageUrl;
+
+  if (selectionText) {
+    capture_type = "selection_with_context";
+    initial_content = selectionText;
+    initial_source_url = pageUrl;
+  } else if (linkUrl) {
+    capture_type = "link_with_context";
+    initial_content = linkUrl;
+    initial_source_url = linkUrl;
+  }
+
+  const baseMetadata = {
+    capture_type,
+    frame_url: frameUrl || null,
+    page_url: pageUrl || null,
+    page_title: pageTitle || null,
+  };
+  if (linkUrl) baseMetadata.link_url = linkUrl;
+
+  const baseClip = {
+    source: "web_clip",
+    content: initial_content,
+    source_url: initial_source_url,
+    title: pageTitle,
+    metadata: baseMetadata,
+  };
 
   await chrome.storage.session.set({
     [PENDING_CAPTURE_KEY]: {
       baseClip,
       capture_type,
-      source_title: tab?.title || null,
-      source_url: baseClip.source_url || null,
-      // Pre-fill content with whatever the one-shot path would have sent.
-      initial_content: baseClip.content,
+      source_title: pageTitle,
+      source_url: initial_source_url,
+      initial_content,
     },
   });
 
   chrome.windows.create({
     url: chrome.runtime.getURL("compose.html"),
     type: "popup",
-    width: 620,
-    height: 560,
+    width: COMPOSE_WIDTH,
+    height: COMPOSE_HEIGHT,
     focused: true,
   });
-}
-
-function buildClip(info, tab) {
-  const pageUrl = tab?.url || info.pageUrl || null;
-  const pageTitle = tab?.title || null;
-
-  switch (info.menuItemId) {
-    case MENU_SEND_SELECTION: {
-      if (!info.selectionText) return null;
-      return {
-        source: "web_clip",
-        content: info.selectionText,
-        source_url: pageUrl,
-        title: pageTitle,
-        metadata: {
-          capture_type: "selection",
-          frame_url: info.frameUrl || null,
-        },
-      };
-    }
-    case MENU_SEND_PAGE: {
-      return {
-        source: "web_clip",
-        content: pageTitle || pageUrl || "(untitled page)",
-        source_url: pageUrl,
-        title: pageTitle,
-        metadata: { capture_type: "page" },
-      };
-    }
-    case MENU_SEND_LINK: {
-      return {
-        source: "web_clip",
-        content: info.linkUrl || "",
-        source_url: info.linkUrl || null,
-        title: info.selectionText || info.linkUrl || pageTitle,
-        metadata: {
-          capture_type: "link",
-          context_page_url: pageUrl,
-          context_page_title: pageTitle,
-        },
-      };
-    }
-    default:
-      return null;
-  }
 }
 
 // ---- Sidecar HTTP ----
@@ -210,7 +178,7 @@ async function postClip(clip) {
     const detail = await response.text().catch(() => "");
     throw new Error(
       `Sidecar returned ${response.status} ${response.statusText}${
-        detail ? ` — ${detail}` : ""
+        detail ? ` - ${detail}` : ""
       }`
     );
   }
@@ -233,7 +201,7 @@ async function notify(title, message) {
   }
 }
 
-// ---- Popup / options can ping this for a health check ----
+// ---- Message handlers (popup + compose) ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "HEALTH_CHECK") {
@@ -247,20 +215,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: false, error: String(err.message || err) });
       }
     })();
-    return true; // keep the channel open for async sendResponse
+    return true;
   }
 
-  if (msg?.type === "SEND_WITH_CONTEXT") {
+  if (msg?.type === "SEND_CLIP") {
     (async () => {
       try {
         const result = await postClip(msg.clip);
         await notify(
           "Sent to BriefCase",
-          `Item #${result.triage_item_id} queued with your added context.`
+          `Item #${result.triage_item_id} queued.`
         );
         sendResponse({ ok: true, data: result });
       } catch (err) {
-        console.error("BriefCase: compose send failed", err);
+        console.error("BriefCase: send failed", err);
         sendResponse({ ok: false, error: String(err.message || err) });
       }
     })();

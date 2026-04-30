@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS triage_queue (
     title TEXT,
     content TEXT NOT NULL,
     metadata TEXT,
+    flags TEXT,
     status TEXT DEFAULT 'pending',
     resolution TEXT,
     resolved_at TIMESTAMP,
@@ -83,6 +84,22 @@ CREATE TABLE IF NOT EXISTS conversation_notes (
     topics TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS external_refs (
+    id INTEGER PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    ref_type TEXT NOT NULL,
+    ref_key TEXT NOT NULL,
+    ref_url TEXT,
+    label TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_refs_entity
+    ON external_refs(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_external_refs_ref_key
+    ON external_refs(ref_key);
 """
 
 
@@ -119,6 +136,8 @@ def _migrate(conn):
         conn.execute("ALTER TABLE inbox ADD COLUMN source_url TEXT")
     if 'source_metadata' not in inbox_columns:
         conn.execute("ALTER TABLE inbox ADD COLUMN source_metadata TEXT")
+    if 'tags' not in inbox_columns:
+        conn.execute("ALTER TABLE inbox ADD COLUMN tags TEXT")
 
     initiative_columns = {row[1] for row in conn.execute("PRAGMA table_info(initiatives)").fetchall()}
     if 'source' not in initiative_columns:
@@ -128,6 +147,10 @@ def _migrate(conn):
     if 'source_metadata' not in initiative_columns:
         conn.execute("ALTER TABLE initiatives ADD COLUMN source_metadata TEXT")
 
+    triage_columns = {row[1] for row in conn.execute("PRAGMA table_info(triage_queue)").fetchall()}
+    if 'flags' not in triage_columns:
+        conn.execute("ALTER TABLE triage_queue ADD COLUMN flags TEXT")
+
     conn.commit()
 
 
@@ -136,26 +159,38 @@ def _migrate(conn):
 def create_inbox_item(conn, title, description=None, complexity=None,
                       urgency=None, initiative_id=None, status='capture',
                       target_week=None, source=None, source_url=None,
-                      source_metadata=None) -> int:
-    """Create inbox item, return its ID."""
+                      source_metadata=None, tags=None) -> int:
+    """Create inbox item, return its ID. tags accepts a list of strings."""
     if source_metadata is not None and not isinstance(source_metadata, str):
         source_metadata = json.dumps(source_metadata)
+    tags_json = None
+    if tags:
+        if isinstance(tags, list):
+            tags_json = json.dumps(tags)
+        elif isinstance(tags, str):
+            tags_json = tags
     cursor = conn.execute(
         """INSERT INTO inbox (title, description, complexity, urgency,
            initiative_id, status, target_week, source, source_url,
-           source_metadata, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           source_metadata, tags, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (title, description, complexity or 1, urgency or 1,
          initiative_id, status, target_week, source, source_url,
-         source_metadata, datetime.now(UTC).isoformat())
+         source_metadata, tags_json, datetime.now(UTC).isoformat())
     )
     conn.commit()
     return cursor.lastrowid
 
 
 def get_inbox_items(conn, initiative_slug=None, status=None,
-                    exclude_completed=True, target_week=None) -> list:
-    """Query inbox items with optional filters."""
+                    exclude_completed=True, target_week=None,
+                    tags=None) -> list:
+    """Query inbox items with optional filters.
+
+    tags: list of tag strings. Returns items whose tags JSON contains ALL
+    of the given tags (AND match). Pass a single string for a single-tag
+    filter.
+    """
     query = "SELECT i.*, init.slug as initiative_slug FROM inbox i"
     query += " LEFT JOIN initiatives init ON i.initiative_id = init.id"
     conditions = []
@@ -173,11 +208,30 @@ def get_inbox_items(conn, initiative_slug=None, status=None,
         conditions.append("i.target_week = ?")
         params.append(target_week)
 
+    tag_filters = []
+    if tags:
+        tag_filters = [tags] if isinstance(tags, str) else list(tags)
+    for t in tag_filters:
+        # Naive substring match on the JSON column - good enough for short
+        # controlled tag vocabularies. Stored format is '["tag1","tag2"]'.
+        conditions.append("i.tags LIKE ?")
+        params.append(f'%"{t}"%')
+
     if conditions:
         query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY i.urgency DESC, i.complexity DESC, i.created_at DESC"
 
-    return [dict(row) for row in conn.execute(query, params).fetchall()]
+    rows = conn.execute(query, params).fetchall()
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get('tags'):
+            try:
+                d['tags'] = json.loads(d['tags'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        results.append(d)
+    return results
 
 
 def complete_inbox_item(conn, item_id: int) -> bool:
@@ -208,7 +262,17 @@ def get_inbox_items_by_week_range(conn, week_start: str, week_end: str,
     query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY i.target_week ASC, i.urgency DESC"
 
-    return [dict(row) for row in conn.execute(query, params).fetchall()]
+    rows = conn.execute(query, params).fetchall()
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get('tags'):
+            try:
+                d['tags'] = json.loads(d['tags'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        results.append(d)
+    return results
 
 
 def delete_inbox_item(conn, item_id: int) -> bool:
@@ -437,16 +501,36 @@ def get_recent_conversation_notes(conn, days: int = 3) -> list:
 
 # --- Triage Queue ---
 
+def _decode_triage_row(row) -> dict:
+    """Decode a raw triage_queue row's JSON columns (metadata, flags)."""
+    d = dict(row)
+    for col in ('metadata', 'flags'):
+        if d.get(col):
+            try:
+                d[col] = json.loads(d[col])
+            except (json.JSONDecodeError, TypeError):
+                pass
+    return d
+
+
 def create_triage_item(conn, source: str, content: str, source_url: str = None,
-                       title: str = None, metadata=None) -> int:
-    """Create a triage queue item, return its ID."""
+                       title: str = None, metadata=None, flags=None) -> int:
+    """Create a triage queue item, return its ID.
+
+    flags is an optional dict of capture-time signals about what work this
+    item will need (e.g. {"needs_jira": true, "needs_code_review": false,
+    "search_around": true, "epic_hint": "THRIV-13413"}). Stored as JSON.
+    Kit reads flags during the triage walk and adapts behavior accordingly.
+    """
     if metadata is not None and not isinstance(metadata, str):
         metadata = json.dumps(metadata)
+    if flags is not None and not isinstance(flags, str):
+        flags = json.dumps(flags)
     cursor = conn.execute(
         """INSERT INTO triage_queue (source, source_url, title, content,
-           metadata, captured_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (source, source_url, title, content, metadata,
+           metadata, flags, captured_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (source, source_url, title, content, metadata, flags,
          datetime.now(UTC).isoformat())
     )
     conn.commit()
@@ -466,16 +550,7 @@ def get_triage_items(conn, status: str = 'pending', limit: int = None) -> list:
         params.append(limit)
 
     rows = conn.execute(query, params).fetchall()
-    results = []
-    for row in rows:
-        d = dict(row)
-        if d.get('metadata'):
-            try:
-                d['metadata'] = json.loads(d['metadata'])
-            except (json.JSONDecodeError, TypeError):
-                pass
-        results.append(d)
-    return results
+    return [_decode_triage_row(r) for r in rows]
 
 
 def get_triage_item(conn, item_id: int) -> Optional[dict]:
@@ -485,13 +560,7 @@ def get_triage_item(conn, item_id: int) -> Optional[dict]:
     ).fetchone()
     if not row:
         return None
-    d = dict(row)
-    if d.get('metadata'):
-        try:
-            d['metadata'] = json.loads(d['metadata'])
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return d
+    return _decode_triage_row(row)
 
 
 def resolve_triage_item(conn, item_id: int, resolution: str) -> bool:
@@ -526,6 +595,79 @@ def get_pending_triage_count(conn) -> int:
     return row['n'] if row else 0
 
 
+# --- External Refs ---
+
+VALID_ENTITY_TYPES = {'initiative', 'inbox'}
+
+
+def _entity_exists(conn, entity_type: str, entity_id: int) -> bool:
+    """Check whether the referenced entity row exists."""
+    table = 'initiatives' if entity_type == 'initiative' else 'inbox'
+    row = conn.execute(f"SELECT 1 FROM {table} WHERE id = ?", (entity_id,)).fetchone()
+    return row is not None
+
+
+def add_external_ref(conn, entity_type: str, entity_id: int, ref_type: str,
+                     ref_key: str, ref_url: str = None,
+                     label: str = None) -> int:
+    """Attach an external ref (Jira ticket, Confluence page, Figma file, etc.)
+    to an initiative or inbox item. Returns the new ref ID.
+    """
+    if entity_type not in VALID_ENTITY_TYPES:
+        raise ValueError(f"entity_type must be one of {VALID_ENTITY_TYPES}")
+    if not _entity_exists(conn, entity_type, entity_id):
+        raise ValueError(f"{entity_type} #{entity_id} not found")
+    cursor = conn.execute(
+        """INSERT INTO external_refs
+           (entity_type, entity_id, ref_type, ref_key, ref_url, label, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (entity_type, entity_id, ref_type, ref_key, ref_url, label,
+         datetime.now(UTC).isoformat())
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def remove_external_ref(conn, ref_id: int) -> bool:
+    """Delete an external ref by its ID. Returns True if found."""
+    cursor = conn.execute("DELETE FROM external_refs WHERE id = ?", (ref_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_external_refs(conn, entity_type: str = None, entity_id: int = None,
+                      ref_type: str = None, ref_key: str = None) -> list:
+    """Query external refs. All filters optional.
+
+    Useful forms:
+      - get_external_refs(entity_type='initiative', entity_id=17) -> all refs
+        for a specific initiative
+      - get_external_refs(ref_key='THRIV-13413') -> reverse lookup: every
+        initiative/inbox item linked to this Jira key
+      - get_external_refs(ref_type='jira_epic') -> all Jira epics tracked
+    """
+    query = "SELECT * FROM external_refs"
+    conditions = []
+    params = []
+    if entity_type is not None:
+        conditions.append("entity_type = ?")
+        params.append(entity_type)
+    if entity_id is not None:
+        conditions.append("entity_id = ?")
+        params.append(entity_id)
+    if ref_type is not None:
+        conditions.append("ref_type = ?")
+        params.append(ref_type)
+    if ref_key is not None:
+        conditions.append("ref_key = ?")
+        params.append(ref_key)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY created_at DESC"
+
+    return [dict(row) for row in conn.execute(query, params).fetchall()]
+
+
 # --- Backup ---
 
 def backup_database(db_path: str = None, backup_dir: str = None,
@@ -547,7 +689,7 @@ def backup_database(db_path: str = None, backup_dir: str = None,
     # Also export as JSON
     conn = get_db_connection(db_path)
     tables = ['inbox', 'initiatives', 'initiative_members', 'dailies',
-              'conversation_notes', 'triage_queue']
+              'conversation_notes', 'triage_queue', 'external_refs']
     export = {}
     for table in tables:
         rows = conn.execute(f"SELECT * FROM {table}").fetchall()

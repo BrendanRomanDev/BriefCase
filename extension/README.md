@@ -56,27 +56,49 @@ extension options below.
 
 ## Using it
 
-**One-shot captures (no popup):**
-- Highlight text on any page → right-click → **BriefCase → Send selection to
-  BriefCase**. A brief notification confirms the capture and gives you the triage
-  item ID.
-- For a whole page with no selection: right-click anywhere on the page → **BriefCase →
-  Send this page to BriefCase**.
-- For a link: right-click on the link → **BriefCase → Send this link to BriefCase**.
+All captures go through a compose popup so you always see the URL before sending
+and can add context.
 
-**Capture with added context (popup):**
-- Right-click on any selection, page, or link → **BriefCase → Send with context...**
-- A small popup window opens with:
-  - Source preview (URL + title, read-only)
-  - Editable "Captured content" textarea — pre-filled with the selection (or page /
-    link info). Edit freely before sending.
-  - "Additional context" textarea — add your own note beneath a
-    `---- additional context ----` divider (why you're capturing, what's the ask,
-    deadline, related initiative, etc.).
-  - Send (**⌘↩**) / Cancel (**Esc**) buttons.
-- The sidecar receives a combined payload: the edited content plus your context
-  appended under the divider. Your context is also stored separately in
+### Two ways to open the compose popup
+
+1. **Right-click → BriefCase → Send to BriefCase...** on any selection, page, or
+   link.
+2. **Keyboard shortcut** (after you set it). Default suggestion: `⌘⇧Y` on macOS,
+   `Ctrl+Shift+Y` on Windows/Linux. Chrome does NOT auto-assign the binding -
+   you set it yourself at `chrome://extensions/shortcuts` (find BriefCase, click
+   the pencil next to "Open the BriefCase compose popup", press your keys).
+
+### What the popup does
+
+- **Page title** shown up top (read-only, just for context).
+- **Source link** — editable URL field. On open:
+   - If your **clipboard** holds a URL, it auto-populates the field.
+     Typical flow on Google Chat: hover a message → **More actions** (three dots) →
+     **Copy message link**, then trigger BriefCase. The compose popup will detect
+     that specific message permalink and use it as the source URL.
+   - Otherwise, it falls back to the current page URL (room-level on Chat, just
+     the page URL elsewhere).
+   - An inline hint tells you what kind of URL is being used:
+     **Google Chat message permalink (specific anchor)** - you got the precise
+     message link.
+     **Google Chat page (room-level, not message-specific)** - the fallback.
+     **URL** - some other URL (page URL, a link you copied, etc.).
+   - You can edit the field freely. Clear it and type your own.
+- **Captured content** — the selection, pre-filled, editable.
+- **Additional context** — optional free-form notes beneath a
+  `---- additional context ----` divider. Stored separately in
   `metadata.user_context` so Kit can surface it distinctly.
+- **Send** (⌘↩) or **Cancel** (Esc).
+
+### Google Chat workflow for best precision
+
+1. Hover the message you want to capture.
+2. Click **More actions** (three dots) → **Copy message link**. Clipboard now holds
+   the specific permalink like
+   `https://chat.google.com/dm/<room>/<thread>/<msg>?cls=10`.
+3. Highlight the message text.
+4. Hit your BriefCase shortcut (or right-click → BriefCase → Send to BriefCase...).
+5. The popup opens with the permalink already in the URL field. Send.
 
 Then when you open Kit, tell it "triage" and it'll walk you through each item 1x1.
 
@@ -97,6 +119,18 @@ or crashed, see `briefcase/sidecar/README.md` for recovery steps.
 **Context menu doesn't appear**
 - Reload the extension: `chrome://extensions` → click the reload button on the
   BriefCase card.
+
+**Keyboard shortcut does nothing**
+Chrome doesn't auto-assign shortcuts. Go to `chrome://extensions/shortcuts`, find
+BriefCase, and set the keys yourself. If the suggested combo conflicts with
+something else on your system, Chrome shows an empty field instead of applying it.
+
+**Clipboard didn't auto-populate the URL field**
+- The popup only auto-reads the clipboard on open (to honor the "Copy message
+  link" flow). If you copy a URL while the popup is already open, paste it
+  manually.
+- Chrome may block `navigator.clipboard.readText()` in rare cases (e.g. if the
+  popup isn't the focused window). Grant focus and reopen.
 - Make sure the page isn't a privileged Chrome page (chrome://, chrome-extension://,
   or the Chrome Web Store — extensions can't inject into those).
 

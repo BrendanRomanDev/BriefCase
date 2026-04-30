@@ -2,18 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>BriefCase — Send with context</title>
+<title>BriefCase — Send to queue</title>
+<link rel="stylesheet" href="themes.css">
+<script src="theme.js"></script>
 <style>
-  :root {
-    --ink: #1a202c;
-    --muted: #64748b;
-    --border: #cbd5e1;
-    --accent: #2b6cb0;
-    --bg: #fafafa;
-    --pane: #ffffff;
-    --err: #c53030;
-    --ok: #2f855a;
-  }
   * { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -25,80 +17,90 @@
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
+    transition: background 120ms ease, color 120ms ease;
   }
   h1 {
     margin: 0;
     font-size: 16px;
     font-weight: 600;
   }
-  .source {
+  .source-title-block {
     background: var(--pane);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 10px 12px;
+    padding: 8px 10px;
     font-size: 12px;
     color: var(--muted);
-    line-height: 1.4;
   }
-  .source .label {
+  .source-title-block .label {
     font-weight: 600;
     color: var(--ink);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    font-size: 11px;
+    font-size: 10px;
     margin-right: 6px;
   }
-  .source .title {
-    color: var(--ink);
-    font-weight: 500;
-  }
-  .source .url {
-    word-break: break-all;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-  }
-  label {
+  .field-label {
     font-weight: 600;
     font-size: 12px;
     margin-bottom: 2px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--ink);
   }
-  textarea {
+  .label-hint {
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .label-hint.ok { color: var(--ok); }
+  .label-hint.warn { color: var(--warn); }
+  input[type="text"], textarea {
     width: 100%;
-    padding: 10px 12px;
+    padding: 9px 11px;
     border: 1px solid var(--border);
     border-radius: 6px;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     font-size: 13px;
     line-height: 1.45;
-    resize: vertical;
     background: var(--pane);
     color: var(--ink);
   }
-  textarea:focus {
+  input[type="text"].url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+  }
+  textarea {
+    resize: vertical;
+  }
+  input[type="text"]:focus, textarea:focus {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
     border-color: var(--accent);
   }
   .divider {
-    border: 0;
-    border-top: 1px dashed var(--border);
-    position: relative;
-    margin: 6px 0 2px 0;
-  }
-  .divider-label {
-    display: block;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 6px 0 -4px 0;
     color: var(--muted);
-    margin-top: 2px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .divider::before, .divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
   }
   .row {
     display: flex;
     gap: 10px;
     align-items: center;
-    margin-top: 4px;
+    margin-top: 6px;
   }
   button {
     padding: 8px 16px;
@@ -110,11 +112,12 @@
   }
   #send {
     background: var(--accent);
-    color: white;
+    color: var(--bg);
   }
   #cancel {
-    background: #e2e8f0;
+    background: var(--pane);
     color: var(--ink);
+    border: 1px solid var(--border);
   }
   button:hover { filter: brightness(1.05); }
   button:disabled {
@@ -127,33 +130,127 @@
   }
   .status.ok { color: var(--ok); }
   .status.err { color: var(--err); }
-  .hint {
-    color: var(--muted);
-    font-size: 11px;
+  .hint { color: var(--muted); font-size: 11px; }
+  .content-block textarea { min-height: 110px; }
+  .context-block textarea { min-height: 100px; }
+  .flags-block {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
   }
-  .selection-block textarea { min-height: 120px; }
-  .context-block textarea { min-height: 110px; }
+  .flags-block .group-label {
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+    margin-bottom: 8px;
+    display: block;
+  }
+  .flags-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px 14px;
+  }
+  .flag-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 0;
+  }
+  .flag-row input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .epic-block {
+    margin-top: 10px;
+    display: none;
+  }
+  .epic-block.visible { display: block; }
+  .epic-block label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: block;
+  }
+  .epic-block input {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+  }
 </style>
 </head>
 <body>
-  <h1>Send to BriefCase with context</h1>
+  <h1>Send to BriefCase</h1>
 
-  <div class="source" id="source-preview">
-    <div><span class="label">Source</span> <span class="title" id="source-title">—</span></div>
-    <div class="url" id="source-url">—</div>
+  <div class="source-title-block" id="source-title-block">
+    <span class="label">Page</span>
+    <span id="source-title">—</span>
   </div>
 
-  <div class="selection-block">
-    <label for="content">Captured content</label>
+  <div class="url-block">
+    <label for="source-url" class="field-label">
+      Source link
+      <span class="label-hint" id="url-hint">&nbsp;</span>
+    </label>
+    <input type="text" id="source-url" class="url" spellcheck="false" autocomplete="off" placeholder="https://..." />
+    <div class="hint">Edit if you want a more specific anchor. On Google Chat: click <strong>More actions</strong> on the message → <strong>Copy message link</strong>, then paste here (or we'll auto-paste on open).</div>
+  </div>
+
+  <div class="flags-block">
+    <span class="group-label">What does this need?</span>
+    <div class="flags-grid">
+      <label class="flag-row">
+        <input type="checkbox" id="flag-brain-dump" />
+        <span>Brain dump (postpone for later)</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-jira" />
+        <span>Jira ticket</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-code-review" />
+        <span>Code review / repo context</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-search-around" />
+        <span>Search around (vault + inbox)</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-calendar" />
+        <span>Calendar follow-up</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-reply" />
+        <span>Draft a reply (in my voice)</span>
+      </label>
+    </div>
+    <div class="epic-block" id="epic-block">
+      <label for="epic-hint" class="field-label">Epic hint (Jira key)</label>
+      <input type="text" id="epic-hint" placeholder="e.g. THRIV-13413" autocomplete="off" spellcheck="false" />
+    </div>
+  </div>
+
+  <div class="content-block">
+    <label for="content" class="field-label">Captured content</label>
     <textarea id="content" spellcheck="false" placeholder="The captured text appears here. Edit freely before sending."></textarea>
   </div>
 
-  <hr class="divider" />
-  <span class="divider-label">---- additional context ----</span>
+  <div class="divider">additional context</div>
 
   <div class="context-block">
-    <label for="context">Additional context (optional)</label>
-    <textarea id="context" placeholder="Why are you capturing this? What's the ask? What's the deadline? Which initiative does it relate to?" autofocus></textarea>
+    <label for="context" class="field-label">Additional context (optional)</label>
+    <textarea id="context" placeholder="Why are you capturing this? What's the ask? What's the deadline? Which initiative does it relate to?"></textarea>
   </div>
 
   <div class="row">

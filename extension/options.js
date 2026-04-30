@@ -7,6 +7,8 @@ const $token = document.getElementById("authToken");
 const $save = document.getElementById("save");
 const $test = document.getElementById("test");
 const $status = document.getElementById("status");
+const $themeSelect = document.getElementById("themeSelect");
+const $themeSwatches = document.getElementById("themeSwatches");
 
 function setStatus(text, kind) {
   $status.textContent = text;
@@ -20,6 +22,8 @@ async function load() {
   ]);
   $url.value = sidecarUrl || DEFAULT_SIDECAR_URL;
   $token.value = authToken || "";
+
+  await initThemeSelector();
 }
 
 async function save() {
@@ -52,6 +56,48 @@ async function testConnection() {
       `Can't reach sidecar at ${sidecarUrl}: ${err.message || err}`,
       "err"
     );
+  }
+}
+
+// ---- Theme selector ----
+
+async function initThemeSelector() {
+  const api = window.BriefCaseTheme;
+  if (!api) return;
+
+  // Populate the dropdown.
+  $themeSelect.innerHTML = "";
+  for (const t of api.THEMES) {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.label;
+    $themeSelect.appendChild(opt);
+  }
+
+  // Set initial value to whichever theme is currently active.
+  const current = await api.getCurrentTheme();
+  $themeSelect.value = current;
+  refreshSwatches();
+
+  // Live preview on change.
+  $themeSelect.addEventListener("change", async (e) => {
+    await api.setTheme(e.target.value);
+    refreshSwatches();
+  });
+}
+
+function refreshSwatches() {
+  // Read the current computed values so swatches reflect the active theme.
+  const cs = getComputedStyle(document.documentElement);
+  const colors = ["--bg", "--pane", "--ink", "--accent"].map((v) =>
+    cs.getPropertyValue(v).trim()
+  );
+  $themeSwatches.innerHTML = "";
+  for (const c of colors) {
+    const s = document.createElement("div");
+    s.className = "swatch";
+    s.style.background = c;
+    $themeSwatches.appendChild(s);
   }
 }
 

@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.6.0"
+VERSION = "0.8.2"
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,8 @@ CONVERSATION START CHECKLIST:
 3. get_recent_activity(days=3) - Recent dailies and session context
 4. get_triage_queue() - Pending captures from the Chrome extension (web clips, Google Chat messages). If count > 0, mention it in the greeting — do NOT auto-walk. Wait for the user to say "triage" before stepping through items.
 5. Read ~/.briefcase/user_profile.yaml - Role, team, projects
-6. Check for current week's rollup - If Monday/Tuesday and no rollup exists, generate with weekly_rollup()
+6. list_pdlc_projects() - PDLC projects in Brendan's lane. If any return with empty briefcase_links, mention unlinked count in the greeting (one line). Do NOT auto-walk — wait for the user to say "walk PDLC" or "align PDLC."
+7. Check for current week's rollup - If Monday/Tuesday and no rollup exists, generate with weekly_rollup()
 
 TOOL QUICK GUIDE:
 - brain_dump: Capture tasks, optionally link to initiative. target_week param for week-level scheduling. Accepts source, source_url, source_metadata for captures that came from elsewhere (e.g. Google Chat).
@@ -30,6 +31,7 @@ TOOL QUICK GUIDE:
 - clear_triage_queue: Delete resolved items from the queue (history cleanup).
 - manage_initiative: CRUD for projects/initiatives. Create action accepts source fields for origins.
 - manage_initiative_members: Add/remove/list team members
+- add_external_ref / remove_external_ref / list_external_refs: Attach Jira tickets, Confluence pages, Figma files, etc. to initiatives or inbox items. ref_type='jira_epic' or 'jira_ticket' auto-derives the URL from integrations.jira.base_url in settings.yaml. Use for every initiative that has a real-world ticket home and for inbox items that relate to a specific remote artifact.
 - plan_daily: Save daily task plan (calendar events handled by agent separately)
 - query_daily: Look up a day's task plan
 - get_forecast: DB-side forecast (deadlines, inbox, targeted items, current time) - agent merges with gcal
@@ -44,6 +46,7 @@ TOOL QUICK GUIDE:
 - print_daily_list: Print daily checklist receipt (template adds checkboxes)
 - print_custom: Print any markdown content as a receipt
 - backup_database: Create timestamped backup
+- list_pdlc_projects / get_pdlc_project / resolve_pdlc_project: Read-only bridge into the product team's PDLC repo (~/Programming/pdlc/). Default lane filter: team=client-experience OR tech_lead=Brendan Roman.
 
 PRINTING FORMAT RULES:
 - ALWAYS use 12-hour time: "2:00 PM" not "14:00"
@@ -71,7 +74,7 @@ WEEKLY ROLLUP:
 TRIAGE QUEUE FLOW:
 - The Chrome extension POSTs captures to a local sidecar which writes to the triage_queue table.
 - At conversation start, get_triage_queue is called. If non-empty, mention count in greeting — do NOT auto-walk.
-- When the user says "triage" (or similar), walk items 1x1. For each item, surface source, source_url, content, and any metadata (sender, channel, thread preview). Ask the user what to do.
+- When the user says "triage" (or similar), walk items 1x1. For each item, surface source, source_url, content, metadata (sender, channel, thread preview), AND any capture-time flags. Ask the user what to do.
 - Decisions route via triage_item:
   - brain_dump: creates inbox item, source_url + metadata carry forward automatically.
   - initiative: creates new initiative, source_url + metadata carry forward.
@@ -81,6 +84,31 @@ TRIAGE QUEUE FLOW:
 - Never silently promote queue items. Every triage action is a user decision.
 - When rendering inbox items that carry source_url, include "[open in <source>]" link inline so the user can jump to origin.
 
+CAPTURE-TIME FLAGS:
+Each triage_queue item may carry a `flags` dict set in the Chrome extension compose popup. Surface these prominently when presenting the item, and act on them DURING the triage conversation:
+- `is_brain_dump: true` → user has pre-decided the destination. Skip the "what should I do with this?" question and route straight to brain_dump. Still confirm title/description/complexity/urgency/initiative_slug/target_week with the user before calling triage_item — the destination is known but the metadata isn't.
+- `search_around: true` → BEFORE proposing actions, run search_notes on key terms from the content, run get_capture_list filtered by initiative or relevant terms, and check existing initiatives for related context. Surface what you found ("found 2 related notes, 1 inbox item, possibly relates to <initiative>") so the user has context for their decision.
+- `needs_jira: true` → propose drafting a Jira ticket. If `epic_hint` is also set, propose that as the parent epic. If atlassian MCP is available, draft → confirm → create via mcp__atlassian__createJiraIssue → record via add_external_ref on whichever entity gets created. If atlassian MCP is unavailable in the current session, draft the body for paste-out.
+- `needs_code_review: true` → after triage resolves into an inbox item or initiative, set tags=['needs_code_context'] on the resulting entity (via brain_dump's tags param or via manage_initiative tags=['needs_code_context'] tags_mode='append'). This is what a future Thriveworks-repo session will query for.
+- `needs_calendar: true` → after triage, propose a calendar event via gcal_create_event (or daily-note alternative if not date-specific yet).
+- `needs_reply: true` → the captured content is something Brendan needs to reply to (Google Chat message, email thread, etc.). Ask: "Draft a reply now, or save for later?" If now → Read ~/.claude/rules/brendan-voice-profile.md, then draft the reply inline using the captured message + any user_context as the prompt, present for approval, optionally pbcopy. If later → tag the resulting inbox item with 'needs_reply' (in addition to any other tags) so future triage walks surface it as needing a draft. When walking the queue and you encounter an inbox item already tagged 'needs_reply', proactively offer to draft the reply at that time.
+Multiple flags may be set on the same item — handle them in this order: search_around (informs everything else) → triage destination (driven by is_brain_dump if set, else user choice) → needs_jira / needs_code_review / needs_calendar / needs_reply (post-resolution side-effects).
+
+PDLC BRIDGE (READ-ONLY):
+- PDLC is the product team's source of truth — phase, gates, PRDs, stakeholders. Lives at ~/Programming/pdlc/ as plain YAML.
+- Kit READS PDLC freely. Kit NEVER writes to PDLC files directly.
+- Linkage: tag BriefCase initiatives with `pdlc-project:<id>` (e.g. `pdlc-project:ce-004`) or `pdlc-initiative:<id>` (e.g. `pdlc-initiative:ce-i002`) via manage_initiative update. tags_mode defaults to 'append' so existing tags persist.
+- When Brendan wants to update PDLC state, hand off to PDLC's own slash commands (available from any cwd): /pdlc:update-context, /pdlc:update-prd, /pdlc:prepare-gate, /pdlc:draft-prd, /pdlc:status, /pdlc:stakeholder-roadmap, /pdlc:start-project.
+- On activation, list_pdlc_projects surfaces any lane project without a Kit link — mention the unlinked count in the greeting; wait for user to say "walk PDLC" or "align PDLC" before acting.
+- When resolving topic references ("the medicare thing"), use resolve_pdlc_project for fuzzy name-to-id lookup.
+
+EXTERNAL REFS:
+- External refs (Jira tickets, Confluence pages, Figma files, etc.) live in the external_refs table and can attach to either an initiative or an inbox item.
+- When rendering initiative status, capture-list items, or status updates, always call list_external_refs(entity_type, entity_id) and surface the refs as clickable links inline. ref_url comes back canonical; for Jira keys it is derived from integrations.jira.base_url.
+- When Brendan creates a Jira ticket (via the atlassian MCP when available), immediately follow up with add_external_ref to record the linkage.
+- When Brendan mentions a Jira key (e.g. "THRIV-12345") in conversation, offer to record it as an external ref on the relevant initiative or inbox item.
+- Reverse lookup: list_external_refs(ref_key='THRIV-12345') to find every local entity tied to a given ticket.
+
 CRITICAL RULES:
 - Events live in Google Calendar, NOT the database.
 - The agent calls gcal_list_events separately and merges with DB data.
@@ -88,6 +116,7 @@ CRITICAL RULES:
 - get_forecast returns current time so the agent can determine past vs upcoming.
 - Never auto-create tasks from meeting notes. Always conversational triage.
 - Never silently triage queue items. Always walk the user through each decision.
+- Never edit files in ~/Programming/pdlc/. All PDLC writes go through /pdlc:* slash commands.
 """
 
 
@@ -136,6 +165,21 @@ def _import_initiative_tools():
     from briefcase.mcp_server.tools.manage_initiative_members import (
         manage_initiative_members, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, manage_initiative_members
+
+
+def _import_external_ref_tools():
+    """Import external-ref tools (Jira/Confluence/Figma links on initiatives and inbox)."""
+    from briefcase.mcp_server.tools.add_external_ref import (
+        add_external_ref, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, add_external_ref
+
+    from briefcase.mcp_server.tools.remove_external_ref import (
+        remove_external_ref, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, remove_external_ref
+
+    from briefcase.mcp_server.tools.list_external_refs import (
+        list_external_refs, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, list_external_refs
 
 
 def _import_daily_tools():
@@ -209,6 +253,21 @@ def _import_system_tools():
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, backup_database
 
 
+def _import_pdlc_tools():
+    """Import read-only PDLC bridge tools."""
+    from briefcase.mcp_server.tools.get_pdlc_project import (
+        get_pdlc_project, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, get_pdlc_project
+
+    from briefcase.mcp_server.tools.list_pdlc_projects import (
+        list_pdlc_projects, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, list_pdlc_projects
+
+    from briefcase.mcp_server.tools.resolve_pdlc_project import (
+        resolve_pdlc_project, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, resolve_pdlc_project
+
+
 # --- Server class ---
 
 class BriefCaseServer:
@@ -225,11 +284,13 @@ class BriefCaseServer:
         self._register_tool_batch(_import_brain_dump_tools())
         self._register_tool_batch(_import_triage_tools())
         self._register_tool_batch(_import_initiative_tools())
+        self._register_tool_batch(_import_external_ref_tools())
         self._register_tool_batch(_import_daily_tools())
         self._register_tool_batch(_import_meeting_tools())
         self._register_tool_batch(_import_reporting_tools())
         self._register_tool_batch(_import_printing_tools())
         self._register_tool_batch(_import_system_tools())
+        self._register_tool_batch(_import_pdlc_tools())
 
         self._register_mcp_handlers()
 

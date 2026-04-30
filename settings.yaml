@@ -19,3 +19,9 @@ printer:
 # the BRIEFCASE_SIDECAR_PORT env variable.
 sidecar:
   port: 8989
+
+# External systems. Used by external_refs to derive canonical URLs from
+# short keys (e.g. 'THRIV-13413' -> 'https://.../browse/THRIV-13413').
+integrations:
+  jira:
+    base_url: https://thriveworks.atlassian.net

@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "BriefCase",
-  "version": "0.2.0",
-  "description": "Capture selected text, links, or Google Chat messages and send them to BriefCase's triage queue. Optionally add context via a compose popup before sending.",
+  "version": "0.7.0",
+  "description": "Capture selected text and send it to BriefCase's triage queue via a compose popup. Override the source URL (e.g. paste a specific Google Chat message link), add extra context, and send.",
   "permissions": [
     "contextMenus",
     "storage",
     "notifications",
     "activeTab",
-    "scripting"
+    "scripting",
+    "clipboardRead"
   ],
   "host_permissions": [
     "http://127.0.0.1:8989/*"
@@ -33,5 +34,14 @@
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
+  },
+  "commands": {
+    "open_compose": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Open the BriefCase compose popup (uses current selection if any)"
+    }
   }
 }

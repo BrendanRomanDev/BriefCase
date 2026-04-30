@@ -28,6 +28,7 @@ async def triage_item(
     urgency: Optional[int] = None,
     initiative_slug: Optional[str] = None,
     target_week: Optional[str] = None,
+    tags: Optional[list] = None,
     initiative_name: Optional[str] = None,
     initiative_deadline: Optional[str] = None,
     initiative_tags: Optional[list] = None,
@@ -87,6 +88,16 @@ async def triage_item(
                     return {"status": "error", "message": f"Initiative '{initiative_slug}' not found"}
                 initiative_id = initiative['id']
 
+            # Auto-derive tags from queue item flags when caller hasn't
+            # supplied an explicit tags list. needs_code_review on the queue
+            # item becomes a needs_code_context tag on the inbox item so
+            # downstream Thriveworks-repo sessions can find it via
+            # get_capture_list(tags=['needs_code_context']).
+            effective_tags = list(tags) if tags else []
+            qflags = queue_item.get('flags') or {}
+            if isinstance(qflags, dict) and qflags.get('needs_code_review') and 'needs_code_context' not in effective_tags:
+                effective_tags.append('needs_code_context')
+
             inbox_id = create_inbox_item(
                 conn,
                 title=title,
@@ -98,8 +109,10 @@ async def triage_item(
                 source=queue_item.get('source'),
                 source_url=queue_item.get('source_url'),
                 source_metadata=queue_item.get('metadata'),
+                tags=effective_tags or None,
             )
             result["inbox_item_id"] = inbox_id
+            result["inbox_tags"] = effective_tags or None
             result["message"] = f"Brain dumped: {title}"
 
         elif action == "initiative":
@@ -114,13 +127,20 @@ async def triage_item(
                 conn.close()
                 return {"status": "error", "message": f"Initiative '{initiative_slug}' already exists"}
 
+            # Auto-derive needs_code_context tag from the queue item's
+            # needs_code_review flag, same as for brain_dump.
+            effective_init_tags = list(initiative_tags) if initiative_tags else []
+            qflags = queue_item.get('flags') or {}
+            if isinstance(qflags, dict) and qflags.get('needs_code_review') and 'needs_code_context' not in effective_init_tags:
+                effective_init_tags.append('needs_code_context')
+
             initiative_id = create_initiative(
                 conn,
                 name=initiative_name,
                 slug=initiative_slug,
                 description=description,
                 deadline=initiative_deadline,
-                tags=initiative_tags,
+                tags=effective_init_tags or None,
                 repo_path=initiative_repo_path,
                 source=queue_item.get('source'),
                 source_url=queue_item.get('source_url'),
@@ -128,6 +148,7 @@ async def triage_item(
             )
             result["initiative_id"] = initiative_id
             result["initiative_slug"] = initiative_slug
+            result["initiative_tags"] = effective_init_tags or None
             result["message"] = f"Created initiative: {initiative_name}"
 
             if scaffold_obsidian_folder:
@@ -200,6 +221,11 @@ TOOL_SCHEMA = {
         "target_week": {
             "type": "string",
             "description": "ISO week for brain_dump action (e.g. '2026-W15')"
+        },
+        "tags": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Tags for brain_dump action. The tag 'needs_code_context' is auto-added when the queue item's flags.needs_code_review is true; pass other tags here to extend."
         },
         "initiative_name": {"type": "string", "description": "Required for initiative action"},
         "initiative_deadline": {"type": "string", "description": "YYYY-MM-DD deadline for new initiative"},

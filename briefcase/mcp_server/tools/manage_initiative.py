@@ -108,7 +108,7 @@ async def manage_initiative(
                 conn.close()
                 return {"status": "error", "message": "slug is required for archive"}
 
-            found = update_initiative(conn, slug, status='completed')
+            found = update_initiative(conn, slug, status='archived')
             conn.close()
 
             if not found:

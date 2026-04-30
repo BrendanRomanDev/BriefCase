@@ -29,7 +29,7 @@ from briefcase.mcp_server.database import (
     get_pending_triage_count,
 )
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 logger = logging.getLogger("briefcase.sidecar")
 
@@ -91,6 +91,8 @@ class ClipIn(BaseModel):
                                  description="Page title, channel name, etc.")
     metadata: Optional[dict] = Field(None,
                                      description="Free-form extra fields (sender, timestamp, thread preview, etc.)")
+    flags: Optional[dict] = Field(None,
+                                  description="Capture-time signals about what work this needs (e.g. {'needs_jira': true, 'needs_code_review': false, 'search_around': true, 'epic_hint': 'THRIV-13413'}). Kit reads these during triage.")
 
 
 class ClipOut(BaseModel):
@@ -163,10 +165,18 @@ def create_app() -> FastAPI:
                 source_url=body.source_url,
                 title=body.title,
                 metadata=body.metadata,
+                flags=body.flags,
             )
         finally:
             conn.close()
-        logger.info("Enqueued triage item #%s from source=%s", item_id, body.source)
+        flag_summary = (
+            ",".join(k for k, v in body.flags.items() if v)
+            if isinstance(body.flags, dict) else ""
+        )
+        logger.info(
+            "Enqueued triage item #%s from source=%s flags=[%s]",
+            item_id, body.source, flag_summary
+        )
         return ClipOut(status="success", triage_item_id=item_id)
 
     return app
