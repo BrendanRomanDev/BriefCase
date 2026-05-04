@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BriefCase",
-  "version": "0.7.0",
+  "version": "0.10.0",
   "description": "Capture selected text and send it to BriefCase's triage queue via a compose popup. Override the source URL (e.g. paste a specific Google Chat message link), add extra context, and send.",
   "permissions": [
     "contextMenus",

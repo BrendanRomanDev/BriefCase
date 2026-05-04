@@ -120,13 +120,52 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 
 - `needs_code_review: true` → After triage resolves into an inbox item or initiative, tag the resulting entity with `needs_code_context`. For brain_dump: pass `tags=['needs_code_context']` (extends `triage_item`'s call to `brain_dump`). For initiative: `manage_initiative(action='update', slug=<slug>, tags=['needs_code_context'], tags_mode='append')`. This is what a future Thriveworks-repo session will query for via `get_capture_list(tags=['needs_code_context'])`.
 
-- `needs_calendar: true` → After triage, propose a calendar event via the gcal MCP, or — if it's not date-bound yet — slot it as a daily note for the relevant day.
+- `needs_meeting: true` → schedule a meeting on Brendan's behalf via the gcal MCP. Detailed flow:
+  1. **Determine attendees.** Prefer `flags.meeting_attendees` (a list of email strings already provided by Brendan in the popup). Otherwise extract names/handles from the captured content/context and ASK Brendan for emails — names alone won't work; gcal needs emails.
+  2. **Gather missing details.** Ask Brendan for what's not obvious:
+     - **Duration** (default 30 min)
+     - **Timeframe** (default: next 5 business days, work hours, exclude weekends)
+     - **Title / topic** (default: synthesize from captured content)
+     - **Agenda** (default: paste captured content + context as the description body so attendees see the conversation that prompted the meeting)
+  3. **Find slots.** Call `mcp__claude_ai_Google_Calendar__suggest_time` with `attendeeEmails=[brendan + attendees]`, ISO `startTime` and `endTime` covering the timeframe, `durationMinutes`, and `preferences={startHour:'09:00', endHour:'17:00', excludeWeekends:true}`.
+  4. **Present 2-3 times.** *"Tue 5/12 at 10am, Wed 5/13 at 2pm, Thu 5/14 at 11am — pick one or push back."*
+  5. **On approval:** `mcp__claude_ai_Google_Calendar__create_event(summary, startTime, endTime, attendeeEmails, description, timeZone='America/New_York')`. The description should reference the source URL when present.
+  6. **Confirm.** Show the event link and which calendar it landed on.
+  7. **Fallback:** if the gcal MCP isn't loaded in this session (rare since it's user-level), draft an availability-request email Brendan can send manually.
 
 - `needs_reply: true` → Brendan needs to reply to the captured content (Chat message, email, etc.). Ask: **"Draft a reply now, or save for later?"**
   - **Now:** Read `~/.claude/rules/brendan-voice-profile.md`, then draft the reply inline using the captured message as the thing being replied to + any `user_context` as guidance. Present for approval. Offer to copy to clipboard. (You're inlining what `/draft` does — same voice profile, same conventions; no need to actually invoke the slash command from within Kit.)
   - **Later:** Add `'needs_reply'` to the resulting inbox item's tags. When you walk the queue or surface inbox items in the future, items tagged `needs_reply` should prompt: *"#X needs a reply — draft now?"* — proactive but non-nagging (offer once per session).
 
-Multiple flags may be set. Handle in this order: **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_review / needs_calendar / needs_reply** as post-resolution side-effects.
+- `is_decision: true` → the captured content represents a decision Brendan wants logged against an initiative. Process:
+  1. **Determine the initiative.** Look in `user_context` first (e.g. *"insurance-management — agreed to scrap full edit mode"*), then infer from content/source. If still unclear, ASK. Confirm slug with Brendan before filing.
+  2. **Synthesize.** Pull from the captured content + context:
+     - `decision`: one clear sentence — what was decided
+     - `rationale`: optional paragraph — why
+     - `decided_at`: ISO date — extract from chat timestamps in metadata when present (e.g. "Thu 5:36 PM" → today's date or the captured day), else today (UTC)
+  3. **Confirm before filing.** Show Brendan the proposed decision/rationale/date and ask: *"File this decision under {initiative}?"*
+  4. **Call** `record_decision(decision, initiative_slug, rationale, decided_at, source_url, metadata)`.
+  5. **Decide the queue resolution side.** Either:
+     - `mark_resolved` — the decision is filed, no inbox item needed (most common — decisions are reference material, not action items)
+     - `brain_dump` alongside — when the decision also implies follow-up work that warrants an inbox item
+
+Multiple flags may be set. Handle in this order: **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_review / needs_meeting / needs_reply / is_decision** as post-resolution side-effects.
+
+### Decision Log (downstream consumption from other sessions)
+
+The decision log is BriefCase's per-initiative buffer of decisions waiting to be filed somewhere downstream — typically a Thriveworks-repo `decisions.md` in a feature branch.
+
+**Three tools** (also usable from any cwd, since briefcase MCP is user-level):
+- `record_decision(decision, initiative_slug, rationale, decided_at, source_url, metadata)` — Kit calls this during triage when `is_decision` is set
+- `get_decision_log(initiative_slug, status='pending')` — pull pending decisions for an initiative; default 'pending' (use 'consumed' or 'all' for history)
+- `consume_decisions(initiative_slug=... OR decision_ids=[...])` — flip rows to status='consumed' after they've been filed; keeps history with `consumed_at`
+
+**Brendan's typical flow:**
+1. **Throughout the day:** capture decisions in the browser via the Decision checkbox on the BriefCase compose popup. Mention initiative in additional context.
+2. **At triage:** Kit synthesizes and records each via `record_decision` — they accumulate at status='pending' per initiative.
+3. **Later, in the Thriveworks repo on a feature branch:** Brendan tells the dev agent *"check briefcase decisions for insurance-management and update decisions.md"*. Dev agent calls `get_decision_log(slug='insurance-management')`, reads existing `decisions.md`, appends in its convention, then calls `consume_decisions(slug='insurance-management')` to mark them filed.
+
+**Critical rule:** BriefCase NEVER writes to a repo's `decisions.md` (or any other in-repo file). The dev agent on each branch owns its own files. BriefCase only provides the structured data via MCP.
 
 Example: `{is_brain_dump: true, needs_reply: true}` on a Dave Shapiro Chat message → Kit asks "draft now or later?" → if later, brain dump with `tags=['needs_reply']` → next session Kit sees the tagged item and offers to draft.
 

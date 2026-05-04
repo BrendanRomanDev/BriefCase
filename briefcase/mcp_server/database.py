@@ -100,6 +100,23 @@ CREATE INDEX IF NOT EXISTS idx_external_refs_entity
     ON external_refs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_external_refs_ref_key
     ON external_refs(ref_key);
+
+CREATE TABLE IF NOT EXISTS decision_log (
+    id INTEGER PRIMARY KEY,
+    initiative_id INTEGER NOT NULL,
+    decision TEXT NOT NULL,
+    rationale TEXT,
+    decided_at DATE,
+    source_url TEXT,
+    metadata TEXT,
+    status TEXT DEFAULT 'pending',
+    consumed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (initiative_id) REFERENCES initiatives(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_log_initiative_status
+    ON decision_log(initiative_id, status);
 """
 
 
@@ -668,6 +685,113 @@ def get_external_refs(conn, entity_type: str = None, entity_id: int = None,
     return [dict(row) for row in conn.execute(query, params).fetchall()]
 
 
+# --- Decision Log ---
+
+def create_decision(conn, initiative_id: int, decision: str,
+                    rationale: str = None, decided_at: str = None,
+                    source_url: str = None, metadata=None) -> int:
+    """Record a decision against an initiative. Returns the new row id.
+
+    decided_at is an ISO date string ('YYYY-MM-DD'). If None, defaults to
+    the current date (UTC).
+    """
+    if metadata is not None and not isinstance(metadata, str):
+        metadata = json.dumps(metadata)
+    if not decided_at:
+        decided_at = datetime.now(UTC).date().isoformat()
+    cursor = conn.execute(
+        """INSERT INTO decision_log
+           (initiative_id, decision, rationale, decided_at, source_url,
+            metadata, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (initiative_id, decision, rationale, decided_at, source_url,
+         metadata, datetime.now(UTC).isoformat())
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def get_decisions(conn, initiative_id: int = None, initiative_slug: str = None,
+                  status: str = None) -> list:
+    """Query decision log. Filter by initiative (id or slug) and/or status.
+
+    Returns rows with the joined initiative slug for convenience.
+    """
+    query = ("SELECT d.*, init.slug as initiative_slug, init.name as initiative_name "
+             "FROM decision_log d "
+             "LEFT JOIN initiatives init ON d.initiative_id = init.id")
+    conditions = []
+    params = []
+    if initiative_id is not None:
+        conditions.append("d.initiative_id = ?")
+        params.append(initiative_id)
+    if initiative_slug:
+        conditions.append("init.slug = ?")
+        params.append(initiative_slug)
+    if status:
+        conditions.append("d.status = ?")
+        params.append(status)
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY d.decided_at DESC, d.created_at DESC"
+
+    rows = conn.execute(query, params).fetchall()
+    results = []
+    for r in rows:
+        d = dict(r)
+        if d.get('metadata'):
+            try:
+                d['metadata'] = json.loads(d['metadata'])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        results.append(d)
+    return results
+
+
+def consume_decisions(conn, initiative_id: int = None,
+                      initiative_slug: str = None,
+                      ids: list = None) -> int:
+    """Mark decisions as consumed (status='consumed').
+
+    Filter mode:
+      - If `ids` is provided, mark only those specific rows.
+      - Else if initiative_id/slug is provided, mark all pending decisions
+        for that initiative.
+      - At least one filter must be specified to avoid mass-mutation.
+
+    Returns the number of rows updated.
+    """
+    if not ids and initiative_id is None and not initiative_slug:
+        raise ValueError("Must specify ids, initiative_id, or initiative_slug.")
+
+    now = datetime.now(UTC).isoformat()
+
+    if ids:
+        placeholders = ",".join("?" for _ in ids)
+        cursor = conn.execute(
+            f"""UPDATE decision_log
+                SET status = 'consumed', consumed_at = ?
+                WHERE id IN ({placeholders}) AND status = 'pending'""",
+            (now, *ids)
+        )
+    else:
+        if initiative_id is None:
+            row = conn.execute(
+                "SELECT id FROM initiatives WHERE slug = ?", (initiative_slug,)
+            ).fetchone()
+            if not row:
+                return 0
+            initiative_id = row['id']
+        cursor = conn.execute(
+            """UPDATE decision_log
+               SET status = 'consumed', consumed_at = ?
+               WHERE initiative_id = ? AND status = 'pending'""",
+            (now, initiative_id)
+        )
+    conn.commit()
+    return cursor.rowcount
+
+
 # --- Backup ---
 
 def backup_database(db_path: str = None, backup_dir: str = None,
@@ -689,7 +813,8 @@ def backup_database(db_path: str = None, backup_dir: str = None,
     # Also export as JSON
     conn = get_db_connection(db_path)
     tables = ['inbox', 'initiatives', 'initiative_members', 'dailies',
-              'conversation_notes', 'triage_queue', 'external_refs']
+              'conversation_notes', 'triage_queue', 'external_refs',
+              'decision_log']
     export = {}
     for table in tables:
         rows = conn.execute(f"SELECT * FROM {table}").fetchall()

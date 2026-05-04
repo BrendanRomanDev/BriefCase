@@ -235,5 +235,44 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  if (msg?.type === "DRAFT_REPLY") {
+    (async () => {
+      try {
+        const result = await postDraft(msg.payload);
+        sendResponse({ ok: true, data: result });
+      } catch (err) {
+        console.error("BriefCase: draft failed", err);
+        sendResponse({ ok: false, error: String(err.message || err) });
+      }
+    })();
+    return true;
+  }
+
   return false;
 });
+
+// ---- Sidecar draft endpoint ----
+
+async function postDraft(payload) {
+  const { url, token } = await getSidecarConfig();
+  if (!token) {
+    throw new Error(
+      "Auth token not configured. Open the BriefCase extension options and paste your token."
+    );
+  }
+  const response = await fetch(`${url}/draft`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-BriefCase-Token": token,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Sidecar /draft returned ${response.status}${detail ? ` - ${detail}` : ""}`
+    );
+  }
+  return response.json();
+}

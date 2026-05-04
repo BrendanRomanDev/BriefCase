@@ -119,6 +119,57 @@
     color: var(--ink);
     border: 1px solid var(--border);
   }
+  #draft-now {
+    background: var(--pane);
+    color: var(--ink);
+    border: 1px solid var(--border);
+  }
+  .draft-result {
+    margin-top: 4px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--pane);
+  }
+  .draft-result .draft-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+  .draft-result .draft-title {
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+  }
+  .draft-result .draft-meta {
+    font-size: 11px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+  .draft-result textarea {
+    min-height: 110px;
+    margin-bottom: 8px;
+  }
+  .draft-result .draft-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .draft-result button {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  #draft-copy {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  #draft-redraft, #draft-hide {
+    background: var(--pane);
+    color: var(--ink);
+    border: 1px solid var(--border);
+  }
   button:hover { filter: brightness(1.05); }
   button:disabled {
     opacity: 0.55;
@@ -227,17 +278,25 @@
         <span>Search around (vault + inbox)</span>
       </label>
       <label class="flag-row">
-        <input type="checkbox" id="flag-calendar" />
-        <span>Calendar follow-up</span>
+        <input type="checkbox" id="flag-meeting" />
+        <span>Schedule a meeting</span>
       </label>
       <label class="flag-row">
         <input type="checkbox" id="flag-reply" />
-        <span>Draft a reply (in my voice)</span>
+        <span>This will need a reply</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-decision" />
+        <span>Decision (file under an initiative)</span>
       </label>
     </div>
     <div class="epic-block" id="epic-block">
       <label for="epic-hint" class="field-label">Epic hint (Jira key)</label>
       <input type="text" id="epic-hint" placeholder="e.g. THRIV-13413" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="epic-block" id="meeting-block">
+      <label for="meeting-attendees" class="field-label">Attendees (comma-separated emails)</label>
+      <input type="text" id="meeting-attendees" placeholder="e.g. dave.shapiro@thriveworks.com, soham.trivedi@thriveworks.com" autocomplete="off" spellcheck="false" />
     </div>
   </div>
 
@@ -255,8 +314,22 @@
 
   <div class="row">
     <button id="send">Send (⌘↩)</button>
+    <button id="draft-now" title="Draft a reply in your voice via the sidecar (uses claude -p, ~5-10s)">Draft now (⌘D)</button>
     <button id="cancel">Cancel (Esc)</button>
     <span id="status" class="status hint"></span>
+  </div>
+
+  <div id="draft-result" class="draft-result" hidden>
+    <div class="draft-header">
+      <span class="draft-title">Drafted reply</span>
+      <span id="draft-meta" class="draft-meta"></span>
+    </div>
+    <textarea id="draft-text" spellcheck="false"></textarea>
+    <div class="draft-actions">
+      <button id="draft-copy">Copy to clipboard</button>
+      <button id="draft-redraft">Re-draft</button>
+      <button id="draft-hide">Hide</button>
+    </div>
   </div>
 
   <script src="compose.js"></script>

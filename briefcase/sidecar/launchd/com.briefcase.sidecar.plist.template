@@ -21,7 +21,7 @@
         <key>PYTHONPATH</key>
         <string>__PROJECT_PATH__</string>
         <key>PATH</key>
-        <string>__PYTHON_BIN_DIR__:/usr/bin:/bin:/usr/local/bin</string>
+        <string>__PYTHON_BIN_DIR__:__HOME__/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin</string>
     </dict>
 
     <key>RunAtLoad</key>

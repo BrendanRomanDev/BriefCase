@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.8.2"
+VERSION = "0.9.1"
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +90,16 @@ Each triage_queue item may carry a `flags` dict set in the Chrome extension comp
 - `search_around: true` → BEFORE proposing actions, run search_notes on key terms from the content, run get_capture_list filtered by initiative or relevant terms, and check existing initiatives for related context. Surface what you found ("found 2 related notes, 1 inbox item, possibly relates to <initiative>") so the user has context for their decision.
 - `needs_jira: true` → propose drafting a Jira ticket. If `epic_hint` is also set, propose that as the parent epic. If atlassian MCP is available, draft → confirm → create via mcp__atlassian__createJiraIssue → record via add_external_ref on whichever entity gets created. If atlassian MCP is unavailable in the current session, draft the body for paste-out.
 - `needs_code_review: true` → after triage resolves into an inbox item or initiative, set tags=['needs_code_context'] on the resulting entity (via brain_dump's tags param or via manage_initiative tags=['needs_code_context'] tags_mode='append'). This is what a future Thriveworks-repo session will query for.
-- `needs_calendar: true` → after triage, propose a calendar event via gcal_create_event (or daily-note alternative if not date-specific yet).
+- `needs_meeting: true` → schedule a meeting on Brendan's behalf. Steps: (1) Determine attendees - prefer flags.meeting_attendees if present (already a list of emails); else extract names/handles from content/context and ASK Brendan for emails. (2) Ask Brendan for missing details: duration (default 30 min), timeframe (default 'next 5 business days, work hours, exclude weekends'), agenda/topic (default: pull from captured content). (3) Call mcp__claude_ai_Google_Calendar__suggest_time(attendeeEmails=[brendan + attendees], startTime, endTime, durationMinutes, preferences={startHour:'09:00', endHour:'17:00', excludeWeekends:true}). (4) Present 2-3 proposed times — Brendan picks one or pushes back. (5) On approval, call mcp__claude_ai_Google_Calendar__create_event with summary, startTime/endTime, attendeeEmails, description (use captured content + context as agenda), timeZone='America/New_York'. (6) Confirm with the event link. If gcal MCP is unavailable in this session, draft an availability email Brendan can send instead.
 - `needs_reply: true` → the captured content is something Brendan needs to reply to (Google Chat message, email thread, etc.). Ask: "Draft a reply now, or save for later?" If now → Read ~/.claude/rules/brendan-voice-profile.md, then draft the reply inline using the captured message + any user_context as the prompt, present for approval, optionally pbcopy. If later → tag the resulting inbox item with 'needs_reply' (in addition to any other tags) so future triage walks surface it as needing a draft. When walking the queue and you encounter an inbox item already tagged 'needs_reply', proactively offer to draft the reply at that time.
-Multiple flags may be set on the same item — handle them in this order: search_around (informs everything else) → triage destination (driven by is_brain_dump if set, else user choice) → needs_jira / needs_code_review / needs_calendar / needs_reply (post-resolution side-effects).
+- `is_decision: true` → the captured content represents a decision that should be filed in an initiative-scoped decision log. Determine the initiative: prefer an explicit slug in user_context ('insurance-management — agreed to scrap full edit mode'), otherwise infer from content/source, otherwise ASK. Then synthesize: a one-line `decision`, an optional `rationale` paragraph, and `decided_at` (ISO date — pull from chat timestamps in metadata if present, else today UTC). Confirm with Brendan before filing. Call `record_decision(decision, initiative_slug, rationale, decided_at, source_url, metadata)`. The decision lives at status='pending' until a downstream session consumes it. On the triage_item side, this can either resolve as 'mark_resolved' (decision filed, no inbox item needed) or run alongside brain_dump (capture as both — reference for now, decision filed for the dev session). Brendan's call.
+Multiple flags may be set on the same item — handle them in this order: search_around (informs everything else) → triage destination (driven by is_brain_dump if set, else user choice) → needs_jira / needs_code_review / needs_meeting / needs_reply / is_decision (post-resolution side-effects).
+
+DECISION LOG (downstream consumption):
+- record_decision adds rows to decision_log table, scoped to an initiative_id. Status starts 'pending'.
+- get_decision_log(initiative_slug, status='pending') returns decisions ready to be filed somewhere downstream (e.g. a Thriveworks-repo decisions.md). Default 'pending'; pass 'all' for history.
+- consume_decisions(initiative_slug=... OR decision_ids=[...]) flips rows to 'consumed' (keeps history with consumed_at). Use after a downstream session has filed them — typically a Thriveworks-repo dev session that read get_decision_log, updated decisions.md in the branch, and now needs to mark them as filed.
+- Brendan's typical workflow: capture decisions throughout the day with is_decision flag, Kit triages and records each, accumulating in pending state per initiative. Later, in the Thriveworks repo on a feature branch, he asks his dev agent to "check briefcase decisions for <initiative> and update decisions.md". Dev agent reads, files, then calls consume_decisions. BriefCase never writes to repo files — the dev agent owns that.
 
 PDLC BRIDGE (READ-ONLY):
 - PDLC is the product team's source of truth — phase, gates, PRDs, stakeholders. Lives at ~/Programming/pdlc/ as plain YAML.
@@ -180,6 +187,21 @@ def _import_external_ref_tools():
     from briefcase.mcp_server.tools.list_external_refs import (
         list_external_refs, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, list_external_refs
+
+
+def _import_decision_log_tools():
+    """Import decision-log tools (per-initiative decision capture/consume)."""
+    from briefcase.mcp_server.tools.record_decision import (
+        record_decision, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, record_decision
+
+    from briefcase.mcp_server.tools.get_decision_log import (
+        get_decision_log, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, get_decision_log
+
+    from briefcase.mcp_server.tools.consume_decisions import (
+        consume_decisions, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, consume_decisions
 
 
 def _import_daily_tools():
@@ -285,6 +307,7 @@ class BriefCaseServer:
         self._register_tool_batch(_import_triage_tools())
         self._register_tool_batch(_import_initiative_tools())
         self._register_tool_batch(_import_external_ref_tools())
+        self._register_tool_batch(_import_decision_log_tools())
         self._register_tool_batch(_import_daily_tools())
         self._register_tool_batch(_import_meeting_tools())
         self._register_tool_batch(_import_reporting_tools())

@@ -13,6 +13,8 @@ Normal operation is via launchd (see briefcase/sidecar/README.md).
 import logging
 import os
 import secrets
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional, Any
 
@@ -29,7 +31,16 @@ from briefcase.mcp_server.database import (
     get_pending_triage_count,
 )
 
-VERSION = "0.2.0"
+VOICE_PROFILE_PATH = Path.home() / ".claude" / "rules" / "brendan-voice-profile.md"
+LAST_DRAFT_PATH = Path.home() / ".briefcase" / "last_draft.txt"
+CLAUDE_CLI_FALLBACKS = [
+    Path.home() / ".local" / "bin" / "claude",
+    Path("/opt/homebrew/bin/claude"),
+    Path("/usr/local/bin/claude"),
+]
+CLAUDE_TIMEOUT_SECONDS = 60
+
+VERSION = "0.3.0"
 
 logger = logging.getLogger("briefcase.sidecar")
 
@@ -106,6 +117,82 @@ class HealthOut(BaseModel):
     pending_count: int
 
 
+class DraftIn(BaseModel):
+    """A draft request from the extension."""
+    content: str = Field(..., min_length=1, max_length=20_000,
+                         description="The original message Brendan is replying to (or topic of the new message).")
+    context: Optional[str] = Field(None, max_length=10_000,
+                                   description="Brendan's notes/intent for the reply: tone, points to hit, deadlines, etc.")
+    tone: str = Field("informal", pattern="^(informal|formal)$",
+                      description="Voice mode. 'informal' for Chat/Slack/email, 'formal' for RFCs/docs.")
+    mode: str = Field("reply", pattern="^(reply|new|cleanup)$",
+                      description="What we're doing: replying to the content, drafting a new message about the topic, or cleaning up Brendan's word-vomit.")
+
+
+class DraftOut(BaseModel):
+    status: str
+    draft: str
+    elapsed_ms: int
+
+
+# --- claude CLI resolution ---
+
+def _resolve_claude_cli() -> Optional[Path]:
+    """Find the claude CLI. Tries PATH first, then known install locations."""
+    via_path = shutil.which("claude")
+    if via_path:
+        return Path(via_path)
+    for candidate in CLAUDE_CLI_FALLBACKS:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def _build_draft_prompt(body: "DraftIn") -> str:
+    """Construct the prompt sent to `claude -p`. Inlines the voice profile."""
+    voice_profile = ""
+    if VOICE_PROFILE_PATH.exists():
+        voice_profile = VOICE_PROFILE_PATH.read_text()
+
+    if body.mode == "reply":
+        task = "Brendan needs to reply to the following message. Draft his reply."
+        target_label = "Message Brendan is replying to"
+    elif body.mode == "cleanup":
+        task = "Brendan wrote the following rough draft. Clean it up in his voice without changing his meaning or points."
+        target_label = "Brendan's rough draft"
+    else:
+        task = "Brendan wants to send a message. The topic and intent follow."
+        target_label = "Topic / intent"
+
+    parts = []
+    if voice_profile:
+        parts.append(
+            "You are drafting a message in Brendan Roman's authentic voice. "
+            "Internalize this voice profile completely before writing:"
+        )
+        parts.append("---")
+        parts.append(voice_profile)
+        parts.append("---")
+    parts.append(f"Tone: {body.tone}")
+    parts.append("")
+    parts.append(task)
+    parts.append("")
+    parts.append(f"## {target_label}")
+    parts.append(body.content.strip())
+    if body.context:
+        parts.append("")
+        parts.append("## Brendan's notes / context for the draft")
+        parts.append(body.context.strip())
+    parts.append("")
+    parts.append(
+        "Output ONLY the draft body — no preamble, no 'Here's the draft:', "
+        "no markdown wrappers (no leading ```), no signature, no closing remarks. "
+        "Just the exact text Brendan would paste into Chat/Slack/email/etc. "
+        "Preserve paragraph breaks where they help readability."
+    )
+    return "\n".join(parts)
+
+
 # --- App ---
 
 def create_app() -> FastAPI:
@@ -148,6 +235,73 @@ def create_app() -> FastAPI:
         finally:
             conn.close()
         return HealthOut(status="ok", version=VERSION, pending_count=count)
+
+    @app.post("/draft", response_model=DraftOut)
+    def draft(
+        body: DraftIn,
+        x_briefcase_token: Optional[str] = Header(default=None, alias="X-BriefCase-Token"),
+    ) -> DraftOut:
+        """Draft a message in Brendan's voice via `claude -p`. Uses the user's
+        existing Claude Code subscription auth (no separate API key)."""
+        _require_auth(x_briefcase_token)
+
+        claude_bin = _resolve_claude_cli()
+        if claude_bin is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="`claude` CLI not found on PATH or in known fallback locations. "
+                       "Install Claude Code or update _resolve_claude_cli."
+            )
+
+        prompt = _build_draft_prompt(body)
+        logger.info("Drafting via %s (prompt: %d chars, mode=%s tone=%s)",
+                    claude_bin, len(prompt), body.mode, body.tone)
+
+        import time
+        t0 = time.monotonic()
+        try:
+            result = subprocess.run(
+                [str(claude_bin), "-p", prompt],
+                capture_output=True,
+                text=True,
+                timeout=CLAUDE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"`claude -p` timed out after {CLAUDE_TIMEOUT_SECONDS}s."
+            )
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Could not exec {claude_bin} - file vanished?"
+            )
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()[:500]
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"claude -p exited {result.returncode}: {stderr or 'no stderr'}"
+            )
+
+        draft_text = (result.stdout or "").strip()
+        if not draft_text:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="claude -p produced empty output."
+            )
+
+        # Persist as the latest draft so `recopy` can restore it from any terminal.
+        try:
+            LAST_DRAFT_PATH.parent.mkdir(parents=True, exist_ok=True)
+            LAST_DRAFT_PATH.write_text(draft_text)
+        except OSError as e:
+            logger.warning("Could not persist draft to %s: %s", LAST_DRAFT_PATH, e)
+
+        logger.info("Drafted %d chars in %dms", len(draft_text), elapsed_ms)
+        return DraftOut(status="success", draft=draft_text, elapsed_ms=elapsed_ms)
 
     @app.post("/clip", response_model=ClipOut, status_code=status.HTTP_201_CREATED)
     def clip(

@@ -22,10 +22,21 @@ const $flagBrainDump = document.getElementById("flag-brain-dump");
 const $flagJira = document.getElementById("flag-jira");
 const $flagCodeReview = document.getElementById("flag-code-review");
 const $flagSearchAround = document.getElementById("flag-search-around");
-const $flagCalendar = document.getElementById("flag-calendar");
+const $flagMeeting = document.getElementById("flag-meeting");
 const $flagReply = document.getElementById("flag-reply");
+const $flagDecision = document.getElementById("flag-decision");
 const $epicBlock = document.getElementById("epic-block");
 const $epicHint = document.getElementById("epic-hint");
+const $meetingBlock = document.getElementById("meeting-block");
+const $meetingAttendees = document.getElementById("meeting-attendees");
+
+const $draftNow = document.getElementById("draft-now");
+const $draftResult = document.getElementById("draft-result");
+const $draftText = document.getElementById("draft-text");
+const $draftMeta = document.getElementById("draft-meta");
+const $draftCopy = document.getElementById("draft-copy");
+const $draftRedraft = document.getElementById("draft-redraft");
+const $draftHide = document.getElementById("draft-hide");
 
 let pending = null;
 let urlAutoFilledFromClipboard = false;
@@ -100,10 +111,21 @@ function collectFlags() {
   if ($flagJira.checked) flags.needs_jira = true;
   if ($flagCodeReview.checked) flags.needs_code_review = true;
   if ($flagSearchAround.checked) flags.search_around = true;
-  if ($flagCalendar.checked) flags.needs_calendar = true;
+  if ($flagMeeting.checked) flags.needs_meeting = true;
   if ($flagReply.checked) flags.needs_reply = true;
+  if ($flagDecision.checked) flags.is_decision = true;
   const epic = $epicHint.value.trim();
   if (epic && $flagJira.checked) flags.epic_hint = epic;
+  if ($flagMeeting.checked) {
+    const raw = $meetingAttendees.value.trim();
+    if (raw) {
+      const attendees = raw
+        .split(/[,\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (attendees.length) flags.meeting_attendees = attendees;
+    }
+  }
   return Object.keys(flags).length > 0 ? flags : null;
 }
 
@@ -112,6 +134,14 @@ function syncEpicVisibility() {
     $epicBlock.classList.add("visible");
   } else {
     $epicBlock.classList.remove("visible");
+  }
+}
+
+function syncMeetingVisibility() {
+  if ($flagMeeting.checked) {
+    $meetingBlock.classList.add("visible");
+  } else {
+    $meetingBlock.classList.remove("visible");
   }
 }
 
@@ -181,8 +211,77 @@ async function cancel() {
   window.close();
 }
 
+// ---- Draft now ----
+
+async function draftNow() {
+  const captured = $content.value.trim();
+  if (!captured) {
+    setStatus("Nothing to draft from - the captured content is empty.", "err");
+    return;
+  }
+  const context = $context.value.trim();
+
+  $draftNow.disabled = true;
+  $send.disabled = true;
+  setStatus("Drafting via claude -p... (5-15s)", "hint");
+
+  chrome.runtime.sendMessage(
+    {
+      type: "DRAFT_REPLY",
+      payload: {
+        content: captured,
+        context: context || null,
+        tone: "informal",
+        mode: "reply",
+      },
+    },
+    (resp) => {
+      $draftNow.disabled = false;
+      $send.disabled = false;
+      if (!resp) {
+        setStatus("No response from service worker.", "err");
+        return;
+      }
+      if (!resp.ok) {
+        setStatus(resp.error || "Draft failed.", "err");
+        return;
+      }
+      const { draft, elapsed_ms } = resp.data;
+      $draftText.value = draft;
+      $draftMeta.textContent = `${(elapsed_ms / 1000).toFixed(1)}s · ${draft.length} chars`;
+      $draftResult.hidden = false;
+      setStatus("", "hint");
+      $draftText.focus();
+      $draftText.select();
+    }
+  );
+}
+
+async function copyDraftToClipboard() {
+  const text = $draftText.value;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("Draft copied to clipboard.", "ok");
+  } catch (err) {
+    setStatus(`Couldn't copy: ${err.message || err}`, "err");
+  }
+}
+
+function hideDraft() {
+  $draftResult.hidden = true;
+  $draftText.value = "";
+}
+
 $send.addEventListener("click", send);
 $cancel.addEventListener("click", cancel);
+$draftNow.addEventListener("click", draftNow);
+$draftCopy.addEventListener("click", copyDraftToClipboard);
+$draftRedraft.addEventListener("click", () => {
+  hideDraft();
+  draftNow();
+});
+$draftHide.addEventListener("click", hideDraft);
 
 $sourceUrl.addEventListener("input", () => {
   urlAutoFilledFromClipboard = false;
@@ -194,11 +293,19 @@ $flagJira.addEventListener("change", () => {
   if ($flagJira.checked) $epicHint.focus();
 });
 
+$flagMeeting.addEventListener("change", () => {
+  syncMeetingVisibility();
+  if ($flagMeeting.checked) $meetingAttendees.focus();
+});
+
 document.addEventListener("keydown", (e) => {
-  const isCmdEnter = (e.metaKey || e.ctrlKey) && e.key === "Enter";
-  if (isCmdEnter) {
+  const isCmd = e.metaKey || e.ctrlKey;
+  if (isCmd && e.key === "Enter") {
     e.preventDefault();
     send();
+  } else if (isCmd && (e.key === "d" || e.key === "D")) {
+    e.preventDefault();
+    draftNow();
   } else if (e.key === "Escape") {
     e.preventDefault();
     cancel();
