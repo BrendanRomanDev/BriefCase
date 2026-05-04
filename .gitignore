@@ -4,3 +4,9 @@ __pycache__/
 .DS_Store
 *.db
 .claude/settings.local.json
+
+# BMAD installs locally for planning / iterating on BriefCase itself.
+# Teammates installing BriefCase shouldn't inherit BMAD scaffolding.
+.bmad-core/
+.claude/commands/BMad/
+web-bundles/
