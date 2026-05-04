@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>BriefCase + Kit — what it is, what it does</title>
+<style>
+  :root {
+    --ink: #1a202c;
+    --muted: #64748b;
+    --soft: #94a3b8;
+    --border: #cbd5e1;
+    --accent: #2b6cb0;
+    --accent-soft: #ebf4ff;
+    --bg: #fafafa;
+    --pane: #ffffff;
+    --code-bg: #f1f5f9;
+    --warn: #b7791f;
+    --warn-soft: #fef3c7;
+    --ok: #2f855a;
+    --ok-soft: #d1fae5;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    margin: 0;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+    font-size: 16px;
+  }
+  .container {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+  header.hero {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+    margin-bottom: 36px;
+  }
+  .eyebrow {
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  h1 {
+    margin: 0 0 12px 0;
+    font-size: 32px;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    margin: 48px 0 12px 0;
+    font-size: 22px;
+    line-height: 1.25;
+  }
+  h3 {
+    margin: 24px 0 6px 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  p { margin: 12px 0; }
+  .lead {
+    color: var(--muted);
+    font-size: 17px;
+  }
+  code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.92em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--ink);
+  }
+  pre {
+    background: var(--code-bg);
+    padding: 14px 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 12px 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  ul, ol { padding-left: 22px; margin: 10px 0; }
+  li { margin: 4px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 40px 0; }
+
+  .toc {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 22px 18px;
+    margin: 24px 0 36px 0;
+    font-size: 14px;
+  }
+  .toc strong {
+    display: block;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .toc a {
+    display: block;
+    padding: 5px 8px 5px 22px;
+    position: relative;
+    border-radius: 4px;
+    line-height: 1.4;
+    transition: background 100ms ease, color 100ms ease;
+  }
+  .toc a::before {
+    content: "›";
+    position: absolute;
+    left: 8px;
+    top: 5px;
+    color: var(--soft);
+    font-weight: 700;
+    transition: transform 120ms ease, color 100ms ease;
+  }
+  .toc a:hover {
+    background: var(--accent-soft);
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .toc a:hover::before {
+    color: var(--accent);
+    transform: translateX(2px);
+  }
+
+  .stack {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+    margin: 16px 0 8px 0;
+  }
+  .stack .layer {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 16px 18px;
+    position: relative;
+  }
+  .stack .layer .num {
+    display: inline-block;
+    width: 22px;
+    height: 22px;
+    line-height: 22px;
+    text-align: center;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .stack .layer h4 {
+    margin: 0 0 4px 0;
+    font-size: 15px;
+  }
+  .stack .layer .where {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .stack .layer p {
+    font-size: 13px;
+    margin: 6px 0 0 0;
+    line-height: 1.5;
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0;
+  }
+  .card {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .card h4 {
+    margin: 0 0 4px 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .card p, .card ul {
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin: 6px 0;
+    color: var(--ink);
+  }
+  .card .tag {
+    display: inline-block;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+
+  .callout {
+    background: var(--accent-soft);
+    border-left: 4px solid var(--accent);
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .callout.warn {
+    background: var(--warn-soft);
+    border-left-color: var(--warn);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: var(--code-bg);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+
+  .flow {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 8px;
+    margin: 18px 0;
+    text-align: center;
+  }
+  .flow-step {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 8px;
+    font-size: 13px;
+    position: relative;
+  }
+  .flow-step .step-n {
+    display: block;
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+  }
+  .flow-step strong { display: block; font-size: 14px; margin-bottom: 4px; }
+  .flow-step p { font-size: 12px; margin: 4px 0 0 0; line-height: 1.4; color: var(--muted); }
+
+  .tworow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 14px 0;
+  }
+  .tworow .pros, .tworow .maybe-not {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .tworow .pros { border-top: 3px solid var(--ok); }
+  .tworow .maybe-not { border-top: 3px solid var(--warn); }
+  .tworow h4 { margin: 0 0 8px 0; font-size: 14px; }
+  .tworow ul { margin: 6px 0 0 0; padding-left: 18px; }
+  .tworow li { font-size: 13.5px; margin: 4px 0; }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  /* Mobile */
+  @media (max-width: 720px) {
+    .container { padding: 20px 16px 60px; }
+    h1 { font-size: 26px; }
+    h2 { font-size: 19px; margin-top: 36px; }
+    .stack { grid-template-columns: 1fr; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .flow { grid-template-columns: 1fr 1fr; gap: 6px; }
+    .tworow { grid-template-columns: 1fr; }
+    pre { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header class="hero">
+  <div class="eyebrow">BriefCase + Kit</div>
+  <h1>A kind-of-opinionated capture-and-plan system.</h1>
+  <p class="lead">
+    I (Brendan) built this for myself, but the bones are general enough that someone with a similar workflow could plug in. This page is an honest tour - what it is, how the parts fit, and where it makes specific choices that may or may not match how you work.
+  </p>
+</header>
+
+<div class="toc">
+  <strong>Quick nav</strong>
+  <a href="#three-pieces">The three pieces</a>
+  <a href="#what-plugs-in">What it plugs into</a>
+  <a href="#capabilities">What it does</a>
+  <a href="#opinions">How it thinks (the conventions)</a>
+  <a href="#flow">A capture, end to end</a>
+  <a href="#fit">Is this for you?</a>
+</div>
+
+<h2 id="three-pieces">The three pieces (and where they run)</h2>
+
+<p>
+  This is the part that often surprises people. It's not one app - it's three loosely-coupled processes that share a single SQLite database. You install all three to get the full experience, but each one is small and self-contained.
+</p>
+
+<div class="stack">
+  <div class="layer">
+    <div class="num">1</div>
+    <div class="where">MCP server + SQLite + skills</div>
+    <h4>The core (BriefCase + Kit)</h4>
+    <p>
+      Python MCP server registered at the user level in Claude Code. The agent (<code>/kit</code> or <code>/kit-lite</code>) is just a slash command that talks to it. Database lives at <code>~/.briefcase/briefcase.db</code>. Available from any directory you launch Claude Code in.
+    </p>
+  </div>
+  <div class="layer">
+    <div class="num">2</div>
+    <div class="where">Local FastAPI daemon (launchd)</div>
+    <h4>The sidecar</h4>
+    <p>
+      Always-on background process at <code>127.0.0.1:8989</code>. Receives captures from the browser extension and writes them to the same DB the MCP server uses. Also runs the <code>/draft</code> endpoint that shells out to <code>claude -p</code> for in-browser drafting. Runs whether Claude Code is open or not.
+    </p>
+  </div>
+  <div class="layer">
+    <div class="num">3</div>
+    <div class="where">Chrome MV3 extension</div>
+    <h4>BriefCase extension</h4>
+    <p>
+      Right-click on any page (or hotkey) opens a compose popup. Sends captures to the sidecar with optional flags (Jira, code research, schedule a meeting, decision, etc.). Always-on, plays well with Google Chat and any web page.
+    </p>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>So yes, three installs.</strong> Setup goes: clone the repo, register the MCP at user level, run <code>install.sh</code> for the sidecar, load the unpacked Chrome extension. Once they're all up, you basically forget about them.
+</div>
+
+<h2 id="what-plugs-in">What it plugs into</h2>
+
+<p>
+  BriefCase doesn't try to replace your existing tools - it tries to be the connective tissue between them. Here's what it reads from and writes to:
+</p>
+
+<div class="grid-3">
+  <div class="card">
+    <span class="tag">Vault</span>
+    <h4>ThriveNotes (Obsidian)</h4>
+    <p>Reads project notes, writes meeting notes and weekly rollups. Each initiative gets a <code>Projects/&lt;slug&gt;/</code> folder. Kit never overwrites your hand-written notes - it appends or files alongside.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Calendar</span>
+    <h4>Google Calendar (MCP)</h4>
+    <p>Source of truth for events. Kit reads your calendar to plan days and propose meeting times. The DB only stores tasks - events stay in gcal where they belong.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Tickets</span>
+    <h4>Atlassian / Jira</h4>
+    <p>Read and write. Kit can fetch tickets, create new ones, update epic descriptions, and link tickets back to local initiatives via the external_refs table.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Code</span>
+    <h4>Thriveworks repo (or any code repo)</h4>
+    <p>When you launch Kit (or kit-lite) from inside a code repo, the working tools (grep, git, gh) are scoped naturally. Items tagged <code>needs_code_context</code> get picked up here.</p>
+  </div>
+  <div class="card">
+    <span class="tag">PDLC</span>
+    <h4>PDLC (read-only)</h4>
+    <p>Kit reads project context.yaml files from <code>~/Programming/pdlc/</code> to align my local initiatives with the broader product roadmap. Kit never writes to PDLC - those go through PDLC's own slash commands.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Voice</span>
+    <h4>My voice profile</h4>
+    <p>The <code>/draft</code> skill (and the sidecar /draft endpoint) reads <code>~/.claude/rules/brendan-voice-profile.md</code> to write replies that actually sound like me. If you adopt this, you'd write your own voice profile.</p>
+  </div>
+</div>
+
+<h2 id="capabilities">What it actually does</h2>
+
+<div class="grid-2">
+  <div class="card">
+    <span class="tag">Capture</span>
+    <h4>Triage queue</h4>
+    <p>Right-click anything in the browser, optionally tag it with flags (Jira, code research, schedule a meeting, decision, etc.), and send it to the queue. Or hit a keyboard shortcut to skip the right-click.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Plan</span>
+    <h4>Daily planning</h4>
+    <p>Calendar-first. Kit pulls your gcal events as the day's skeleton, then layers in tasks from the inbox. You confirm; it saves the daily plan.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Capture</span>
+    <h4>Brain dumps</h4>
+    <p>Quick "don't want to forget this" capture. Optionally linked to an initiative, tagged for a specific week, or scheduled for a specific day - depending on how committed it is.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Decide</span>
+    <h4>Decision log</h4>
+    <p>Capture decisions as they happen, file them under an initiative. Later, in the relevant code repo, your dev agent reads the log and updates an in-repo <code>decisions.md</code>. Single source of truth, multiple consumers.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Write</span>
+    <h4>Draft assistant (in your voice)</h4>
+    <p>From the compose popup: "Draft now" button shells out to <code>claude -p</code> with your voice profile inlined. Returns a drafted reply in the popup. Copy-paste into Chat. No terminal copy artifacts.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Write</span>
+    <h4>Stakeholder updates + retros</h4>
+    <p>Pull initiative status across DB + Obsidian + Github (PRs / commits) and synthesize into stakeholder-ready text. Or generate a week-by-week retrospective with velocity trends.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Schedule</span>
+    <h4>Schedule a meeting</h4>
+    <p>Capture a chat conversation, check "Schedule a meeting", paste attendee emails. Kit finds free slots across calendars, proposes 2-3 times, you pick one, it creates the event.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Review</span>
+    <h4>PR review queue</h4>
+    <p>Tag captures with "PR review". When you walk the queue from the Thriveworks repo, those items are ready for <code>/review-as-brendan</code> or any review skill you've built.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Print</span>
+    <h4>Thermal printer (optional)</h4>
+    <p>Print today's checklist to a thermal receipt printer if you want a physical artifact for the day. Pure indulgence. Also prints custom markdown receipts.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Coordinate</span>
+    <h4>Multi-agent claim/release</h4>
+    <p>Run Kit in BriefCase and kit-lite in your code repo simultaneously without stepping on each other. Atomic claim flips a queue item to <code>in_progress</code> with your label so the other session sees it's locked.</p>
+  </div>
+</div>
+
+<h2 id="opinions">How it thinks (the conventions)</h2>
+
+<p>
+  This is the part where you decide if the system fits your brain. I made specific choices about how work gets organized based on my personal workflows. They serve me well, but they may or may not serve you.
+</p>
+
+<h3>1. Events live in Google Calendar. Tasks live in BriefCase. Never both.</h3>
+<p>
+  Calendar events have a single source of truth - your gcal. Kit never duplicates them into the DB. When planning a day, Kit pulls events from gcal, then layers in tasks from the inbox around them. If you're someone who likes a single unified todo list with calendar items inline, this won't feel right.
+</p>
+
+<h3>2. Three flavors of "I need to do this":</h3>
+<table>
+  <tr><th>Flavor</th><th>When</th><th>Where it goes</th></tr>
+  <tr>
+    <td><strong>Brain dump</strong></td>
+    <td>"Sometime, no specific day"</td>
+    <td>Inbox, no target_week. You'll triage it later.</td>
+  </tr>
+  <tr>
+    <td><strong>Target week</strong></td>
+    <td>"This week / next week, but not a specific day yet"</td>
+    <td>Inbox with <code>target_week='2026-W19'</code>. Surfaces during weekly planning.</td>
+  </tr>
+  <tr>
+    <td><strong>Daily note</strong></td>
+    <td>"Tuesday, do X"</td>
+    <td>Saved on the daily, not the inbox. It's already triaged.</td>
+  </tr>
+</table>
+<p>
+  The system asks which flavor you mean if it's ambiguous. The choice matters because each one shows up in a different surface (inbox / forecast / specific day).
+</p>
+
+<h3>3. Captures are signals, not decisions.</h3>
+<p>
+  Sending something to the queue from the browser doesn't decide what to do with it. Triage decides. The flags you check at capture time (Jira, code research, schedule a meeting, decision, etc.) are <em>hints</em> for triage - they shape the conversation but never auto-execute.
+</p>
+
+<h3>4. Initiatives are the spine. Everything optionally hangs off one.</h3>
+<p>
+  Inbox items, decisions, Jira tickets, ThriveNotes folders, and team members all attach to initiatives by slug. You can have orphan items, but the system encourages you to link them - that's how status reports and retros assemble themselves later.
+</p>
+
+<h3>5. Two Kits, two moods.</h3>
+<table>
+  <tr><th>Mode</th><th>Use it when</th></tr>
+  <tr>
+    <td><code>/kit</code> (full)</td>
+    <td>Daily planning, Monday briefing, weekly retro - anywhere you want the front-loaded context (calendar, forecast, recent activity, weekly rollup, PDLC alignment).</td>
+  </tr>
+  <tr>
+    <td><code>/kit-lite</code></td>
+    <td>Quick brain dump, walking the queue, code research from inside a repo. Same MCP, no front-loading. Pulls context only when you ask.</td>
+  </tr>
+</table>
+
+<h2 id="flow">A capture, end to end</h2>
+
+<p>An example of how it actually flows from a chat message into structured work:</p>
+
+<div class="flow">
+  <div class="flow-step">
+    <span class="step-n">Step 1</span>
+    <strong>Capture</strong>
+    <p>In Google Chat, highlight a message, hit shortcut. Compose popup opens. Add context, check flags, send.</p>
+  </div>
+  <div class="flow-step">
+    <span class="step-n">Step 2</span>
+    <strong>Queue</strong>
+    <p>Sidecar receives the POST, writes to the triage_queue table with your flags. Item is now pending.</p>
+  </div>
+  <div class="flow-step">
+    <span class="step-n">Step 3</span>
+    <strong>Triage</strong>
+    <p>You open Kit later, say "triage". Kit walks the queue, surfaces flags, asks what to do per item.</p>
+  </div>
+  <div class="flow-step">
+    <span class="step-n">Step 4</span>
+    <strong>Action</strong>
+    <p>Brain dump, new initiative, file a ThriveNote, draft a Jira ticket, schedule a meeting - whatever the flags + your decision dictate.</p>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Concrete scenario.</strong> Dave messages you about a bug. You're in the middle of something else.
+  <ol style="margin-top: 8px; margin-bottom: 0;">
+    <li>Highlight Dave's message, hit ⌘⇧Y. Add: <em>"insurance-management - logs say we're matching plan name without state"</em>. Check <strong>Code research</strong> + <strong>Jira ticket</strong> (epic THRIV-13413). Send.</li>
+    <li>Item lands in the queue with both flags set.</li>
+    <li>Tonight, triage: Kit synthesizes the issue, drafts a Jira ticket body for your review, creates it under the IM Phase 3 epic, links it back as an external_ref on the resulting brain dump.</li>
+    <li>Brain dump is tagged <code>needs_code_context</code>. Tomorrow morning in the Thriveworks repo, kit-lite picks it up, you investigate the actual code together, file a fix.</li>
+  </ol>
+</div>
+
+<h2 id="fit">Is this for you?</h2>
+
+<div class="tworow">
+  <div class="pros">
+    <h4>Probably yes if...</h4>
+    <ul>
+      <li>You already use Claude Code daily</li>
+      <li>You like keeping notes in a markdown vault (Obsidian or similar)</li>
+      <li>You want a single capture funnel for messages, web clips, decisions, and follow-ups</li>
+      <li>You're comfortable with three small processes that don't talk to each other except through a shared SQLite file</li>
+      <li>You have a few preferences about how planning should work and want them codified</li>
+      <li>You're willing to write your own voice profile if you want the draft assistant</li>
+    </ul>
+  </div>
+  <div class="maybe-not">
+    <h4>Probably not if...</h4>
+    <ul>
+      <li>You want a single all-in-one app with a real UI (this is mostly a CLI experience plus a browser extension)</li>
+      <li>You prefer todo-list tools where calendar events and tasks live in one combined feed</li>
+      <li>You don't use Obsidian or any markdown notes system</li>
+      <li>You'd rather not run a Python daemon, a Chrome extension, and a Claude Code MCP server all on one machine</li>
+      <li>You want it to "just work" without learning a mental model of brain_dump vs target_week vs daily notes</li>
+    </ul>
+  </div>
+</div>
+
+<h3>If you're curious enough to try it</h3>
+<p>
+  I can walk you through setup - it's three things to install (the MCP, the sidecar, the extension) and a couple of config files. The honest pitch: don't expect it to feel right immediately. The system has a few preferences baked in, and you'll either nod along or push back. Either's fine. The interesting question is whether the shape of how you work is roughly close enough to mine that adopting these conventions saves you more time than it costs you.
+</p>
+
+<footer>
+  BriefCase + Kit. A personal tool I built to manage capture, planning, and decision tracking across the systems I use every day. Multiple components, single SQLite database, a few preferences baked in. Not a product - just useful enough that I figured I'd share it. Ping me with questions.
+</footer>
+
+</div>
+</body>
+</html>
