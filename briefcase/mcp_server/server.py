@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.9.1"
+VERSION = "0.10.0"
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,10 @@ TOOL QUICK GUIDE:
 - brain_dump: Capture tasks, optionally link to initiative. target_week param for week-level scheduling. Accepts source, source_url, source_metadata for captures that came from elsewhere (e.g. Google Chat).
 - get_capture_list: Query inbox, filter by initiative/status/target_week. Items may carry source_url — render as clickable links back to origin when present.
 - complete_task / delete_task: Task lifecycle
-- get_triage_queue: List pending captures awaiting triage. Each item has source, source_url, content, metadata.
-- triage_item: Resolve a queue item into brain_dump / initiative / thrivenote / daily_note / discard. Source URL + metadata carry forward automatically on brain_dump and initiative destinations.
+- get_triage_queue: List pending + in_progress captures awaiting triage. Each item has source, source_url, content, metadata, flags, status, claimed_at, claimed_by.
+- triage_item: Resolve a queue item (pending or in_progress) into brain_dump / initiative / thrivenote / daily_note / discard. Source URL + metadata carry forward automatically on brain_dump and initiative destinations.
+- claim_triage_item: Atomically lock a pending item to your session before working it. Sets status='in_progress' + claimed_by. Other agents see the claim and skip.
+- release_triage_item: Flip in_progress back to pending — for stale claims or handoffs.
 - clear_triage_queue: Delete resolved items from the queue (history cleanup).
 - manage_initiative: CRUD for projects/initiatives. Create action accepts source fields for origins.
 - manage_initiative_members: Add/remove/list team members
@@ -89,11 +91,19 @@ Each triage_queue item may carry a `flags` dict set in the Chrome extension comp
 - `is_brain_dump: true` → user has pre-decided the destination. Skip the "what should I do with this?" question and route straight to brain_dump. Still confirm title/description/complexity/urgency/initiative_slug/target_week with the user before calling triage_item — the destination is known but the metadata isn't.
 - `search_around: true` → BEFORE proposing actions, run search_notes on key terms from the content, run get_capture_list filtered by initiative or relevant terms, and check existing initiatives for related context. Surface what you found ("found 2 related notes, 1 inbox item, possibly relates to <initiative>") so the user has context for their decision.
 - `needs_jira: true` → propose drafting a Jira ticket. If `epic_hint` is also set, propose that as the parent epic. If atlassian MCP is available, draft → confirm → create via mcp__atlassian__createJiraIssue → record via add_external_ref on whichever entity gets created. If atlassian MCP is unavailable in the current session, draft the body for paste-out.
-- `needs_code_review: true` → after triage resolves into an inbox item or initiative, set tags=['needs_code_context'] on the resulting entity (via brain_dump's tags param or via manage_initiative tags=['needs_code_context'] tags_mode='append'). This is what a future Thriveworks-repo session will query for.
+- `needs_code_research: true` (or legacy `needs_code_review` — same semantic) → after triage resolves into an inbox item or initiative, set tags=['needs_code_context'] on the resulting entity. This is what a future Thriveworks-repo session will query for via get_capture_list(tags=['needs_code_context']) — exploratory codebase investigation, NOT PR review.
+- `needs_pr_review: true` → distinct from needs_code_research: this is a specific Github PR that needs to be reviewed (URL expected in content). After triage, tag the entity with 'needs_pr_review'. From the Thriveworks repo, walking these items typically maps to invoking /review-as-brendan or /review-im for the actual review work. Surface a hint to that effect during triage.
 - `needs_meeting: true` → schedule a meeting on Brendan's behalf. Steps: (1) Determine attendees - prefer flags.meeting_attendees if present (already a list of emails); else extract names/handles from content/context and ASK Brendan for emails. (2) Ask Brendan for missing details: duration (default 30 min), timeframe (default 'next 5 business days, work hours, exclude weekends'), agenda/topic (default: pull from captured content). (3) Call mcp__claude_ai_Google_Calendar__suggest_time(attendeeEmails=[brendan + attendees], startTime, endTime, durationMinutes, preferences={startHour:'09:00', endHour:'17:00', excludeWeekends:true}). (4) Present 2-3 proposed times — Brendan picks one or pushes back. (5) On approval, call mcp__claude_ai_Google_Calendar__create_event with summary, startTime/endTime, attendeeEmails, description (use captured content + context as agenda), timeZone='America/New_York'. (6) Confirm with the event link. If gcal MCP is unavailable in this session, draft an availability email Brendan can send instead.
 - `needs_reply: true` → the captured content is something Brendan needs to reply to (Google Chat message, email thread, etc.). Ask: "Draft a reply now, or save for later?" If now → Read ~/.claude/rules/brendan-voice-profile.md, then draft the reply inline using the captured message + any user_context as the prompt, present for approval, optionally pbcopy. If later → tag the resulting inbox item with 'needs_reply' (in addition to any other tags) so future triage walks surface it as needing a draft. When walking the queue and you encounter an inbox item already tagged 'needs_reply', proactively offer to draft the reply at that time.
 - `is_decision: true` → the captured content represents a decision that should be filed in an initiative-scoped decision log. Determine the initiative: prefer an explicit slug in user_context ('insurance-management — agreed to scrap full edit mode'), otherwise infer from content/source, otherwise ASK. Then synthesize: a one-line `decision`, an optional `rationale` paragraph, and `decided_at` (ISO date — pull from chat timestamps in metadata if present, else today UTC). Confirm with Brendan before filing. Call `record_decision(decision, initiative_slug, rationale, decided_at, source_url, metadata)`. The decision lives at status='pending' until a downstream session consumes it. On the triage_item side, this can either resolve as 'mark_resolved' (decision filed, no inbox item needed) or run alongside brain_dump (capture as both — reference for now, decision filed for the dev session). Brendan's call.
-Multiple flags may be set on the same item — handle them in this order: search_around (informs everything else) → triage destination (driven by is_brain_dump if set, else user choice) → needs_jira / needs_code_review / needs_meeting / needs_reply / is_decision (post-resolution side-effects).
+Multiple flags may be set on the same item — handle them in this order: search_around (informs everything else) → triage destination (driven by is_brain_dump if set, else user choice) → needs_jira / needs_code_research / needs_pr_review / needs_meeting / needs_reply / is_decision (post-resolution side-effects).
+
+QUEUE CONCURRENCY (multi-agent coordination):
+- triage_queue items have status pending | in_progress | resolved.
+- When walking the queue and you intend to actually work on an item (not just glance), call claim_triage_item(item_id, claimed_by) FIRST. claimed_by should be a short signal label like 'tw-repo kit-lite' or 'briefcase kit'. The claim is atomic (SQL UPDATE ... WHERE status='pending'); if another agent claimed first, this fails cleanly with failed_reason='already_claimed'.
+- get_triage_queue returns BOTH pending and in_progress items. When presenting to the user, surface them in TWO sections — pending (free for any agent) and in_progress (locked by another session, with claimed_by + claimed_at visible).
+- If an in_progress item is older than ~1hr (claimed_at >1hr ago), surface a soft hint that the claim may be stale and offer release_triage_item to free it. Never auto-release.
+- triage_item (resolution) accepts both 'pending' and 'in_progress' starting states. Typical flow: claim → in_progress → do work → triage_item(action=...) → resolved. If you decide not to handle an item after claiming, call release_triage_item(item_id) to free it.
 
 DECISION LOG (downstream consumption):
 - record_decision adds rows to decision_log table, scoped to an initiative_id. Status starts 'pending'.
@@ -161,6 +171,14 @@ def _import_triage_tools():
     from briefcase.mcp_server.tools.clear_triage_queue import (
         clear_triage_queue, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, clear_triage_queue
+
+    from briefcase.mcp_server.tools.claim_triage_item import (
+        claim_triage_item, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, claim_triage_item
+
+    from briefcase.mcp_server.tools.release_triage_item import (
+        release_triage_item, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, release_triage_item
 
 
 def _import_initiative_tools():

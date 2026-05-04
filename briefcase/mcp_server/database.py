@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS triage_queue (
     status TEXT DEFAULT 'pending',
     resolution TEXT,
     resolved_at TIMESTAMP,
+    claimed_at TIMESTAMP,
+    claimed_by TEXT,
     captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -167,6 +169,10 @@ def _migrate(conn):
     triage_columns = {row[1] for row in conn.execute("PRAGMA table_info(triage_queue)").fetchall()}
     if 'flags' not in triage_columns:
         conn.execute("ALTER TABLE triage_queue ADD COLUMN flags TEXT")
+    if 'claimed_at' not in triage_columns:
+        conn.execute("ALTER TABLE triage_queue ADD COLUMN claimed_at TIMESTAMP")
+    if 'claimed_by' not in triage_columns:
+        conn.execute("ALTER TABLE triage_queue ADD COLUMN claimed_by TEXT")
 
     conn.commit()
 
@@ -583,14 +589,16 @@ def get_triage_item(conn, item_id: int) -> Optional[dict]:
 def resolve_triage_item(conn, item_id: int, resolution: str) -> bool:
     """Mark a triage queue item as resolved with a resolution label.
 
+    Accepts both 'pending' (typical) and 'in_progress' (after a claim) as
+    starting states. Returns True if the resolve happened.
+
     resolution examples: 'brain_dump', 'initiative', 'thrivenote',
     'daily_note', 'discarded', 'external'.
-    Returns True if the item existed.
     """
     cursor = conn.execute(
         """UPDATE triage_queue
            SET status = 'resolved', resolution = ?, resolved_at = ?
-           WHERE id = ? AND status = 'pending'""",
+           WHERE id = ? AND status IN ('pending', 'in_progress')""",
         (resolution, datetime.now(UTC).isoformat(), item_id)
     )
     conn.commit()
@@ -602,6 +610,45 @@ def clear_resolved_triage_items(conn) -> int:
     cursor = conn.execute("DELETE FROM triage_queue WHERE status = 'resolved'")
     conn.commit()
     return cursor.rowcount
+
+
+def claim_triage_item(conn, item_id: int, claimed_by: str) -> bool:
+    """Atomically flip a pending triage item to 'in_progress'. Returns True
+    if the claim succeeded (item was pending), False if not (item was
+    already claimed/resolved/missing).
+
+    The atomicity is provided by the WHERE status='pending' clause: if
+    another agent claimed first, our UPDATE matches zero rows.
+    """
+    cursor = conn.execute(
+        """UPDATE triage_queue
+           SET status = 'in_progress',
+               claimed_at = ?,
+               claimed_by = ?
+           WHERE id = ? AND status = 'pending'""",
+        (datetime.now(UTC).isoformat(), claimed_by, item_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def release_triage_item(conn, item_id: int) -> bool:
+    """Flip an in_progress triage item back to 'pending'. Returns True if
+    the release happened (item was in_progress), False if not.
+
+    Use when an agent realizes it shouldn't be the one handling the item,
+    or to manually clear a stale claim.
+    """
+    cursor = conn.execute(
+        """UPDATE triage_queue
+           SET status = 'pending',
+               claimed_at = NULL,
+               claimed_by = NULL
+           WHERE id = ? AND status = 'in_progress'""",
+        (item_id,)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 def get_pending_triage_count(conn) -> int:

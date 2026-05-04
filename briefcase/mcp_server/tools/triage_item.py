@@ -66,7 +66,7 @@ async def triage_item(
         if not queue_item:
             conn.close()
             return {"status": "error", "message": f"Triage item #{item_id} not found"}
-        if queue_item['status'] != 'pending':
+        if queue_item['status'] not in ('pending', 'in_progress'):
             conn.close()
             return {
                 "status": "error",
@@ -89,14 +89,18 @@ async def triage_item(
                 initiative_id = initiative['id']
 
             # Auto-derive tags from queue item flags when caller hasn't
-            # supplied an explicit tags list. needs_code_review on the queue
-            # item becomes a needs_code_context tag on the inbox item so
-            # downstream Thriveworks-repo sessions can find it via
-            # get_capture_list(tags=['needs_code_context']).
+            # supplied an explicit tags list. needs_code_research (or legacy
+            # needs_code_review) on the queue item becomes a needs_code_context
+            # tag on the inbox item so downstream Thriveworks-repo sessions
+            # can find it via get_capture_list(tags=['needs_code_context']).
+            # needs_pr_review becomes its own tag for review-as-brendan flow.
             effective_tags = list(tags) if tags else []
             qflags = queue_item.get('flags') or {}
-            if isinstance(qflags, dict) and qflags.get('needs_code_review') and 'needs_code_context' not in effective_tags:
-                effective_tags.append('needs_code_context')
+            if isinstance(qflags, dict):
+                if (qflags.get('needs_code_research') or qflags.get('needs_code_review')) and 'needs_code_context' not in effective_tags:
+                    effective_tags.append('needs_code_context')
+                if qflags.get('needs_pr_review') and 'needs_pr_review' not in effective_tags:
+                    effective_tags.append('needs_pr_review')
 
             inbox_id = create_inbox_item(
                 conn,
@@ -127,12 +131,15 @@ async def triage_item(
                 conn.close()
                 return {"status": "error", "message": f"Initiative '{initiative_slug}' already exists"}
 
-            # Auto-derive needs_code_context tag from the queue item's
-            # needs_code_review flag, same as for brain_dump.
+            # Auto-derive needs_code_context / needs_pr_review tags from
+            # queue item flags, same logic as brain_dump.
             effective_init_tags = list(initiative_tags) if initiative_tags else []
             qflags = queue_item.get('flags') or {}
-            if isinstance(qflags, dict) and qflags.get('needs_code_review') and 'needs_code_context' not in effective_init_tags:
-                effective_init_tags.append('needs_code_context')
+            if isinstance(qflags, dict):
+                if (qflags.get('needs_code_research') or qflags.get('needs_code_review')) and 'needs_code_context' not in effective_init_tags:
+                    effective_init_tags.append('needs_code_context')
+                if qflags.get('needs_pr_review') and 'needs_pr_review' not in effective_init_tags:
+                    effective_init_tags.append('needs_pr_review')
 
             initiative_id = create_initiative(
                 conn,

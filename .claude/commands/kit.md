@@ -118,7 +118,9 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 
 - `needs_jira: true` → After (or instead of) the standard destinations, propose drafting a Jira ticket. If `epic_hint` is also set, propose that as the parent epic — verify it exists via `mcp__atlassian__getJiraIssue` first. Draft the ticket body, present for approval, then create via `mcp__atlassian__createJiraIssue`. After creation, immediately call `add_external_ref` to record the new ticket on whichever inbox/initiative resulted from triage. If the atlassian MCP isn't loaded in this session (e.g. running in a context without it), say so and produce a paste-ready ticket body for Brendan to handle manually.
 
-- `needs_code_review: true` → After triage resolves into an inbox item or initiative, tag the resulting entity with `needs_code_context`. For brain_dump: pass `tags=['needs_code_context']` (extends `triage_item`'s call to `brain_dump`). For initiative: `manage_initiative(action='update', slug=<slug>, tags=['needs_code_context'], tags_mode='append')`. This is what a future Thriveworks-repo session will query for via `get_capture_list(tags=['needs_code_context'])`.
+- `needs_code_research: true` (or legacy `needs_code_review` — same semantic) → exploratory codebase investigation. After triage resolves into an inbox item or initiative, tag the resulting entity with `needs_code_context`. For brain_dump: pass `tags=['needs_code_context']` (extends `triage_item`'s call to `brain_dump`). For initiative: `manage_initiative(action='update', slug=<slug>, tags=['needs_code_context'], tags_mode='append')`. This is what a future Thriveworks-repo session will query for via `get_capture_list(tags=['needs_code_context'])`. **Distinct from `needs_pr_review` below — code research is exploratory, PR review is a specific Github review.**
+
+- `needs_pr_review: true` → a specific Github PR needs review. Content should contain the PR URL. After triage resolves into an inbox item, tag the resulting entity with `needs_pr_review`. From the Thriveworks repo, walking these items typically maps to invoking `/review-as-brendan` (or `/review-im` for IM-specific PRs) for the actual review work — surface that hint to Brendan during triage. The auto-derive in `triage_item` handles both `needs_code_context` and `needs_pr_review` tag propagation when the corresponding flags are set.
 
 - `needs_meeting: true` → schedule a meeting on Brendan's behalf via the gcal MCP. Detailed flow:
   1. **Determine attendees.** Prefer `flags.meeting_attendees` (a list of email strings already provided by Brendan in the popup). Otherwise extract names/handles from the captured content/context and ASK Brendan for emails — names alone won't work; gcal needs emails.
@@ -149,7 +151,34 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
      - `mark_resolved` — the decision is filed, no inbox item needed (most common — decisions are reference material, not action items)
      - `brain_dump` alongside — when the decision also implies follow-up work that warrants an inbox item
 
-Multiple flags may be set. Handle in this order: **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_review / needs_meeting / needs_reply / is_decision** as post-resolution side-effects.
+Multiple flags may be set. Handle in this order: **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_research / needs_pr_review / needs_meeting / needs_reply / is_decision** as post-resolution side-effects.
+
+### Queue Concurrency (multi-agent coordination)
+
+`triage_queue` items have three statuses: `pending` | `in_progress` | `resolved`. The new `in_progress` state is a soft lock so multiple Claude Code sessions don't race on the same item.
+
+**When to claim:**
+- Whenever you intend to actually work on a queue item (not just glance at it during the activation count), call `claim_triage_item(item_id, claimed_by)` first.
+- `claimed_by` is a short signal label. Auto-derive from your context: `<cwd-context> <agent-name>`. Examples: `tw-repo kit-lite`, `briefcase kit`, `pdlc kit-lite`. Keep it lean — this is a signal, not a log message.
+- The claim is **atomic** (SQL `UPDATE ... WHERE status='pending'`). If another agent claimed first, the call fails with `failed_reason: 'already_claimed'` — do NOT retry, surface the conflict to Brendan.
+
+**When walking the queue:**
+- `get_triage_queue` returns BOTH pending and in_progress items. Surface them in TWO sections:
+  - **Pending** (free for any agent to pick)
+  - **In progress** (claimed by another session — show `claimed_by` and `claimed_at`)
+- For in_progress items, do NOT try to work on them unless Brendan tells you to. Default behavior: skip with a note like *"#X is being handled by `<claimed_by>` (claimed `<time ago>`). Skipping unless you say otherwise."*
+- If `claimed_at` is more than ~1 hour old, surface a soft hint: *"This claim looks stale. `release_triage_item(item_id)` to free it."* Never auto-release.
+
+**When done with a claimed item:**
+- Call `triage_item(item_id, action=...)` as normal — it accepts both `pending` and `in_progress` starting states and flips to `resolved`.
+
+**Releasing without resolving:**
+- `release_triage_item(item_id)` flips `in_progress` back to `pending`, clearing claimed_at/claimed_by. Use when you decide not to handle the item, when a claim is stale, or when explicitly handing off.
+
+**Brendan's typical multi-agent flow:**
+- He's in his BriefCase Kit session, picks up a Jira-flagged item → claims it (`briefcase kit`) → drafts the ticket via atlassian MCP → resolves.
+- Simultaneously he's in Thriveworks repo with kit-lite, picks a PR review item → claims it (`tw-repo kit-lite`) → invokes `/review-as-brendan` → resolves.
+- Neither agent steps on the other's work because the claim is atomic.
 
 ### Decision Log (downstream consumption from other sessions)
 
