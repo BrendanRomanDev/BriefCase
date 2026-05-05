@@ -293,6 +293,10 @@
         <input type="checkbox" id="flag-decision" />
         <span>Decision (file under an initiative)</span>
       </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-person" />
+        <span>Add / update a person</span>
+      </label>
     </div>
     <div class="epic-block" id="epic-block">
       <label for="epic-hint" class="field-label">Epic hint (Jira key)</label>
@@ -301,6 +305,10 @@
     <div class="epic-block" id="meeting-block">
       <label for="meeting-attendees" class="field-label">Attendees (comma-separated emails)</label>
       <input type="text" id="meeting-attendees" placeholder="e.g. dave.shapiro@thriveworks.com, soham.trivedi@thriveworks.com" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="epic-block" id="person-block">
+      <label for="person-name" class="field-label">Person name (optional - Kit will infer from content if blank)</label>
+      <input type="text" id="person-name" placeholder="e.g. Dave Shapiro" autocomplete="off" spellcheck="false" />
     </div>
   </div>
 

@@ -151,7 +151,31 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
      - `mark_resolved` — the decision is filed, no inbox item needed (most common — decisions are reference material, not action items)
      - `brain_dump` alongside — when the decision also implies follow-up work that warrants an inbox item
 
-Multiple flags may be set. Handle in this order: **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_research / needs_pr_review / needs_meeting / needs_reply / is_decision** as post-resolution side-effects.
+- `is_person: true` → the captured content is information about a person Brendan interacts with. People live in the vault at `~/Notes/ThriveNotes/people/` (one markdown file per person — established 2026-04-24). Process:
+  1. **Determine the person.** Prefer `flags.person_name` if set in the popup. Otherwise extract from content/context. If still unclear, ASK.
+  2. **Check if the file already exists** at `~/Notes/ThriveNotes/people/<slug>.md`. Slug convention follows whatever the existing folder uses (typically lowercase-firstname-lastname). `ls ~/Notes/ThriveNotes/people/` to check existing convention if unsure.
+  3. **If exists:** read it, identify what's NEW from the capture vs already known, propose an **append-style** update (NEVER overwrite content), confirm with Brendan in 1-2 lines per the global ThriveNotes rule, then write.
+  4. **If not exists:** propose creating with structured fields:
+     ```
+     # <Full Name>
+
+     **Role:** <role/team if known>
+     **How I know them:** <context of relationship>
+
+     ## Key facts
+     - <fact 1 from this capture>
+     - <fact 2>
+
+     ## Recent
+     - <date>: <what happened in this capture>
+
+     ---
+     Source: [link](source_url)
+     ```
+     Confirm placement + filename with Brendan, then write.
+  5. **Resolve the queue item** as `mark_resolved` (the file is the action). Or alongside `brain_dump` if there's a follow-up action embedded ("ping them about X next week").
+
+Multiple flags may be set. Handle in this order: **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_research / needs_pr_review / needs_meeting / needs_reply / is_decision / is_person** as post-resolution side-effects.
 
 ### Queue Concurrency (multi-agent coordination)
 

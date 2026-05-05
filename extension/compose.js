@@ -26,10 +26,13 @@ const $flagSearchAround = document.getElementById("flag-search-around");
 const $flagMeeting = document.getElementById("flag-meeting");
 const $flagReply = document.getElementById("flag-reply");
 const $flagDecision = document.getElementById("flag-decision");
+const $flagPerson = document.getElementById("flag-person");
 const $epicBlock = document.getElementById("epic-block");
 const $epicHint = document.getElementById("epic-hint");
 const $meetingBlock = document.getElementById("meeting-block");
 const $meetingAttendees = document.getElementById("meeting-attendees");
+const $personBlock = document.getElementById("person-block");
+const $personName = document.getElementById("person-name");
 
 const $draftNow = document.getElementById("draft-now");
 const $draftResult = document.getElementById("draft-result");
@@ -116,6 +119,7 @@ function collectFlags() {
   if ($flagMeeting.checked) flags.needs_meeting = true;
   if ($flagReply.checked) flags.needs_reply = true;
   if ($flagDecision.checked) flags.is_decision = true;
+  if ($flagPerson.checked) flags.is_person = true;
   const epic = $epicHint.value.trim();
   if (epic && $flagJira.checked) flags.epic_hint = epic;
   if ($flagMeeting.checked) {
@@ -127,6 +131,10 @@ function collectFlags() {
         .filter(Boolean);
       if (attendees.length) flags.meeting_attendees = attendees;
     }
+  }
+  if ($flagPerson.checked) {
+    const name = $personName.value.trim();
+    if (name) flags.person_name = name;
   }
   return Object.keys(flags).length > 0 ? flags : null;
 }
@@ -144,6 +152,14 @@ function syncMeetingVisibility() {
     $meetingBlock.classList.add("visible");
   } else {
     $meetingBlock.classList.remove("visible");
+  }
+}
+
+function syncPersonVisibility() {
+  if ($flagPerson.checked) {
+    $personBlock.classList.add("visible");
+  } else {
+    $personBlock.classList.remove("visible");
   }
 }
 
@@ -298,6 +314,11 @@ $flagJira.addEventListener("change", () => {
 $flagMeeting.addEventListener("change", () => {
   syncMeetingVisibility();
   if ($flagMeeting.checked) $meetingAttendees.focus();
+});
+
+$flagPerson.addEventListener("change", () => {
+  syncPersonVisibility();
+  if ($flagPerson.checked) $personName.focus();
 });
 
 document.addEventListener("keydown", (e) => {
