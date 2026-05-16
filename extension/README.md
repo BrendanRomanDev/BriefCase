@@ -19,14 +19,16 @@ sender, permalink, and optional thread context — is coming in v1.5.
 
 ## Prerequisites
 
-Install and start the sidecar first:
+The sidecar needs to be running. On a fresh machine the root `./setup.sh` starts
+it for you and prints the auth token. If you've already done that, skip ahead to
+"Install the extension" below. Otherwise, install just the sidecar standalone:
 
 ```bash
 bash briefcase/sidecar/install.sh
 ```
 
-That command prints your auth token at the end. Copy it — you'll paste it into the
-extension options below.
+Either command prints your auth token at the end. Copy it — you'll paste it into
+the extension options below.
 
 ---
 

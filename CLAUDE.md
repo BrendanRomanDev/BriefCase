@@ -6,8 +6,8 @@ BriefCase is an MCP server powering **Kit**, a work-focused planning assistant f
 
 ## Architecture
 
-- **SQLite** (`~/.briefcase/briefcase.db`) — operational data: inbox, initiatives, dailies, conversation notes
-- **Obsidian** (`~/Notes/ThriveNotes/`) — unstructured knowledge: meeting notes, project docs
+- **SQLite** (`~/.briefcase/briefcase.db`) — operational data: inbox (with target_week), initiatives, dailies, conversation notes
+- **Obsidian** (`~/Notes/ThriveNotes/`) — unstructured knowledge: meeting notes, project docs, weekly rollups
 - **Google Calendar MCP** — event source of truth (separate MCP, NOT part of this server)
 - **Kit agent** (`.claude/commands/kit.md`) — orchestrates all three
 
@@ -44,10 +44,20 @@ Each tool is one file in `briefcase/mcp_server/tools/`. It exports:
 
 Register in `server.py` via the generator pattern (`_import_*_tools` functions).
 
-## Running the Server
+## Installing & Running
+
+First-time install on a fresh machine — one command:
 
 ```bash
-cd /Users/brendan.roman/Programming/BriefCase
+./setup.sh
+```
+
+Idempotent. See `README.md` for the quick-start and `docs/INSTALL.md` for the
+long-form walkthrough.
+
+Running the MCP server standalone (rare — Claude Code spawns it):
+
+```bash
 source venv/bin/activate
 python -m briefcase.mcp_server.server
 ```
@@ -55,8 +65,12 @@ python -m briefcase.mcp_server.server
 ## Project Structure
 
 ```
-briefcase/
-├── CLAUDE.md                   # This file
+BriefCase/
+├── setup.sh                    # One-command installer (idempotent)
+├── README.md                   # Quick-start + architecture + troubleshooting
+├── CLAUDE.md                   # This file (development rules)
+├── CHANGELOG.md                # Version history and capability log
+├── settings.yaml               # Feature flags, paths
 ├── .claude/commands/           # Agent instructions and skills
 │   ├── kit.md                  # Main Kit agent
 │   └── print-daily.md          # Print skill
@@ -65,7 +79,18 @@ briefcase/
 │   ├── config.py               # Settings loader
 │   ├── database.py             # SQLite + CRUD helpers
 │   └── tools/                  # One file per MCP tool
-├── scripts/                    # Setup and utility scripts
-├── settings.yaml               # Feature flags, paths
+├── briefcase/sidecar/          # FastAPI HTTP bridge for the Chrome extension
+│   ├── server.py               # FastAPI app
+│   ├── install.sh              # Idempotent launchd installer (called by ./setup.sh)
+│   └── README.md
+├── extension/                  # Chrome extension (Manifest V3, loaded unpacked)
+├── scripts/
+│   ├── backup-db.sh            # SQLite online-backup → ~/.briefcase/backups + iCloud
+│   ├── restore-db.sh           # Restore with integrity check + safety snapshot
+│   ├── restart-mcp-server.sh   # Kill the running MCP server (Claude Code re-spawns)
+│   └── setup.sh                # Forwarding shim → ../setup.sh
+├── docs/
+│   ├── INSTALL.md              # New-machine walkthrough
+│   └── user-guide.md           # Day-to-day usage
 └── tests/
 ```

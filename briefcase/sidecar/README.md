@@ -49,11 +49,14 @@ directly. SQLite handles concurrent access.
 
 ## Install / reinstall
 
+First-time install: just run the root `./setup.sh` — it calls this installer as
+phase 4. The standalone command is for re-runs:
+
 ```bash
 bash briefcase/sidecar/install.sh
 ```
 
-The installer is idempotent. It:
+The installer is idempotent either way. It:
 
 1. Confirms the Python venv has FastAPI installed (runs `pip install` if missing).
 2. Generates `~/.briefcase/sidecar_token` if it doesn't exist yet (32 random url-safe
