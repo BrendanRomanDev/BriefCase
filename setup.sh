@@ -153,12 +153,13 @@ if claude mcp list 2>/dev/null | grep -qE "^${MCP_NAME}:"; then
     skip "MCP server '${MCP_NAME}' already registered (claude mcp list)"
 else
     add "registering MCP server '${MCP_NAME}' at user scope"
-    # The `--` separator is required by `claude mcp add` — without it, the
-    # command path looks like a flag and gets eaten by the parser.
+    # `--env` is a variadic flag — must come AFTER the positional name,
+    # otherwise commander.js eats the name as another env value and errors.
+    # The `--` separator is required so the command path isn't parsed as flags.
     claude mcp add \
         --scope user \
-        --env "PYTHONPATH=${PROJECT_ROOT}" \
         "${MCP_NAME}" \
+        --env "PYTHONPATH=${PROJECT_ROOT}" \
         -- \
         "${VENV_PYTHON}" "${PROJECT_ROOT}/briefcase/mcp_server/server.py"
     ok "registered. Restart any running Claude Code session to pick it up."
