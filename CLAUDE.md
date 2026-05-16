@@ -87,6 +87,7 @@ BriefCase/
 ├── scripts/
 │   ├── backup-db.sh            # SQLite online-backup → ~/.briefcase/backups + iCloud
 │   ├── restore-db.sh           # Restore with integrity check + safety snapshot
+│   ├── health-check.sh         # Doctor: venv, deps, DB, MCP, sidecar, token
 │   ├── restart-mcp-server.sh   # Kill the running MCP server (Claude Code re-spawns)
 │   └── setup.sh                # Forwarding shim → ../setup.sh
 ├── docs/

@@ -137,7 +137,16 @@ launchctl load -w ~/Library/LaunchAgents/com.briefcase.sidecar.plist
 
 ## 7. Verify end-to-end
 
-Open a Claude Code session anywhere on disk:
+Quickest single-shot health check:
+
+```bash
+scripts/health-check.sh
+```
+
+Reports the status of every piece (venv, deps, DB, MCP, sidecar, token, launchd)
+in one pass. Should be all `[ok]` lines and end with "Everything is healthy."
+
+Then the real test — open a Claude Code session anywhere on disk:
 
 ```bash
 cd ~/

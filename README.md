@@ -130,6 +130,10 @@ against a live DB (it uses SQLite's online backup API, not `cp`).
 
 ## Troubleshooting
 
+**First stop**: `scripts/health-check.sh`. Reports the status of every piece —
+venv, dependencies, DB integrity, MCP registration, sidecar, token, launchd —
+in one pass. Useful right after install and any time something looks off.
+
 **`/kit` says "no MCP server"**
 Check `claude mcp list | grep briefcase`. If it's absent, re-run `./setup.sh`
 (phase 3 registers it at user scope so it's reachable from any working

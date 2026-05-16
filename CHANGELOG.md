@@ -1,5 +1,11 @@
 # BriefCase Changelog
 
+## Packaging follow-ups — 2026-05-16
+
+- **`scripts/health-check.sh`** — doctor script that reports the status of every component (venv, dependencies, DB integrity, MCP registration, sidecar, token, launchd) in one pass. First stop when something looks off. Wired into the troubleshooting sections of `README.md` and `docs/INSTALL.md`.
+- **Published to GitHub** as `BrendanRomanDev/BriefCase` (private). Origin remote now wired so `git clone` is the entry point on new machines.
+- **Dotfiles `setup/05-briefcase.sh`** (sibling change) — clones BriefCase to `~/Programming/BriefCase` (creating `~/Programming` if absent) and runs its `./setup.sh`. Completes the dotfiles → BriefCase install loop so a fresh mac gets the whole stack from `setup/00–05`.
+
 ## Packaging — 2026-05-16
 
 Repo is now installable on a fresh machine via a single idempotent script. Modelled after the peon-ping dotfiles flow ([install] / [skip] / [ok] / [warn] echoes), and designed to be invokable from a future `~/.dotfiles/setup/05-briefcase.sh`.
