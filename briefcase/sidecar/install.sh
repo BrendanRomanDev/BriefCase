@@ -28,7 +28,8 @@ LOGS_DIR="${HOME}/.briefcase/logs"
 # --- Preflight ---
 if [[ ! -x "${VENV_PYTHON}" ]]; then
     echo "ERROR: Python venv not found at ${VENV_PYTHON}"
-    echo "Run scripts/setup.sh first to create the venv."
+    echo "Run ./setup.sh from the repo root — it creates the venv,"
+    echo "then runs this sidecar installer automatically."
     exit 1
 fi
 

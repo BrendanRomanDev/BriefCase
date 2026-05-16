@@ -31,14 +31,17 @@ Kit is an MCP-powered agent that helps manage work at Thriveworks through Claude
 
 ```bash
 cd ~/Programming/BriefCase
-bash scripts/setup.sh
+./setup.sh
 ```
 
-This creates:
+The full new-machine walkthrough is in [`INSTALL.md`](INSTALL.md). The
+installer is idempotent and handles venv creation, dependency install,
+`~/.briefcase/` bootstrap, MCP registration, and sidecar startup.
+
+`setup.sh` creates:
 - `~/.briefcase/briefcase.db` — the SQLite database
 - `~/.briefcase/backups/` — backup directory
 - `~/.briefcase/user_profile.yaml` — your profile (edit this with real details)
-- Obsidian vault directories under `~/Notes/ThriveNotes/Projects/`
 
 ### Edit Your User Profile
 
@@ -183,7 +186,7 @@ Backups go to `~/.briefcase/backups/`. Run backups before major changes or perio
 
 **Kit MCP tools not available:** Make sure you're in the BriefCase directory and the `.mcp.json` is configured. Restart Claude Code if needed.
 
-**Database not found:** Run `bash scripts/setup.sh` to initialize.
+**Database not found:** Run `./setup.sh` from the repo root to initialize.
 
 **Calendar events not showing:** Google Calendar MCP must be configured separately in Claude Code settings. Kit doesn't manage this.
 

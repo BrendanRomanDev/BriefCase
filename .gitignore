@@ -10,3 +10,16 @@ __pycache__/
 .bmad-core/
 .claude/commands/BMad/
 web-bundles/
+
+# Defensive — these files live under ~/.briefcase/ in normal operation,
+# but if anything ever drops them into the repo, do not commit them.
+sidecar_token
+user_profile.yaml
+last_draft.txt
+.briefcase/
+
+# Editor / OS noise
+*.swp
+*.bak
+.idea/
+.vscode/

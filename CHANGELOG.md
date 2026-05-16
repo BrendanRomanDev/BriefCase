@@ -1,5 +1,51 @@
 # BriefCase Changelog
 
+## Packaging — 2026-05-16
+
+Repo is now installable on a fresh machine via a single idempotent script. Modelled after the peon-ping dotfiles flow ([install] / [skip] / [ok] / [warn] echoes), and designed to be invokable from a future `~/.dotfiles/setup/05-briefcase.sh`.
+
+### `setup.sh` (repo root)
+
+One command brings up a fresh work mac. Six phases, each idempotent:
+
+| Phase | Action |
+|---|---|
+| 0 | Preflight — verifies `python3` and `claude` are on PATH. |
+| 1 | Creates `venv/`, installs `requirements.txt`. |
+| 2 | Creates `~/.briefcase/{backups,logs}`, initialises `briefcase.db`, writes a `user_profile.yaml` template if one isn't already there. |
+| 3 | Registers the MCP server with Claude Code at **user scope** (so `/kit` works from any working directory). Idempotent — skips if already registered. |
+| 4 | Delegates to `briefcase/sidecar/install.sh`, which installs the launchd plist and starts the sidecar. |
+| 5 | Prints next steps + the sidecar auth token. |
+
+The old `scripts/setup.sh` is now a thin shim that forwards to the new root script (preserves muscle memory).
+
+### Database backup + restore
+
+The DB at `~/.briefcase/briefcase.db` is the only thing that doesn't reconstitute itself from the repo. Two new scripts make it easy to back up and move:
+
+- **`scripts/backup-db.sh`** — uses SQLite's online backup API (safe under concurrent writes from the sidecar / MCP server). Writes to `~/.briefcase/backups/briefcase_<stamp>.db` and *also* mirrors to `~/Library/Mobile Documents/com~apple~CloudDocs/BriefCase-Backups/` if iCloud Drive is on. `--local` skips the iCloud mirror.
+- **`scripts/restore-db.sh`** — interactive picker, `--latest` (newest by mtime across both locations), or explicit path. Verifies integrity before touching the live DB. Takes a safety pre-restore snapshot of the current DB so the restore is itself reversible.
+
+The recommended off-machine durability story is the iCloud Drive mirror — no extra tooling, no second repo, no separate cloud account. On a fresh mac you log in, iCloud syncs the mirror down, run `scripts/restore-db.sh --latest`, done.
+
+### Documentation
+
+- **`README.md`** (new, repo root) — quick-start, architecture diagram, what-lives-where, troubleshooting.
+- **`docs/INSTALL.md`** (new) — long-form new-machine walkthrough: prerequisites → clone → setup → profile → extension → token → restore → verify.
+- **`docs/user-guide.md`** updated to reference the new top-level setup path.
+
+### `.gitignore` hardening
+
+Defensive ignores added for `sidecar_token`, `user_profile.yaml`, `last_draft.txt`, and `.briefcase/` — none of those should ever land in repo tracking, but explicit beats lucky.
+
+### Cross-repo sync (dotfiles)
+
+Sibling work in `~/.dotfiles/`:
+- `bin/sync` — runs `git pull` + `./setup.sh` in every repo listed in `repos.conf`. Currently registers BriefCase.
+- `bin/wip-status` — silent-when-clean drift reporter wired into shell startup. Reports ahead/behind/dirty per managed repo.
+
+The pair turns "make this machine current" into one command and "what's stale" into a passive shell-startup notice.
+
 ## v0.9.0 — 2026-04-29 / 2026-04-30
 
 Session arc: Chrome extension grew a richer capture vocabulary (flags), Kit learned to act on those flags during triage, the sidecar gained a draft endpoint backed by the user's Claude Code subscription, and a per-initiative decision log landed for cross-repo workflows.
