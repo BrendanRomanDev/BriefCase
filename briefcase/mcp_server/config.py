@@ -10,6 +10,7 @@ DEFAULTS = {
     "obsidian_vault": str(Path.home() / "Notes" / "ThriveNotes"),
     "user_profile": str(Path.home() / ".briefcase" / "user_profile.yaml"),
     "backup_dir": str(Path.home() / ".briefcase" / "backups"),
+    "pdlc_repo": str(Path.home() / "Programming" / "pdlc"),
     "features": {"printing": False, "repo_integration": True},
 }
 
