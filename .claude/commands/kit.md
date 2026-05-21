@@ -84,12 +84,17 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 
 **The walk:**
 1. Call `get_triage_queue()` to get all pending items.
-2. For each item, present it clearly with:
+2. **Auto-file sweep (first thing, before presenting anything to Brendan).** Partition items by `flags.auto_file`:
+   - For each `auto_file: true` item: claim it (`claim_triage_item`), infer destination from content + context (any of the normal routes — `brain_dump`, `thrivenote`, `daily_note`, `initiative`, `discard`, `mark_resolved`), file it via the normal destination-specific path, then run any post-resolution side-effects implied by other flags on the same item (e.g. `auto_file + needs_jira` → file the inbox item AND draft+create the ticket AND `add_external_ref` it onto the resulting entity, all without prompting).
+   - Anchor: *Brendan wouldn't have clicked auto if it mattered too much.* Lean toward "pick something reasonable and move on." Only ask if genuinely stuck (e.g. content references a person whose file Brendan would clearly want to confirm placement on, or an ambiguous initiative slug with no nearby hint). Asking should be the rare exception.
+   - If you really can't classify an item with confidence, leave it pending (release the claim) and surface it in the human-review section of the walk instead. Don't ask mid-sweep.
+   - Report **per item** what was done and where: title/preview, destination, path or ID. Render before moving to the interactive walk. If the auto-batch is large (>5 items), group by destination in the summary.
+3. For each remaining (non-auto) item, present it clearly with:
    - Source (e.g. `google_chat`, `web_clip`) and an "open in source" link using `source_url`
    - Title (if present) + a preview of `content` (first ~200 chars, full on request)
    - Any `metadata` fields that matter (sender, channel, timestamp, thread preview)
-3. Ask Brendan what to do. Valid actions: `brain_dump`, `initiative`, `thrivenote`, `daily_note`, `discard`. Offer suggestions based on content (e.g. "This looks like a review request from Orion — brain dump with urgency=2?") but let him decide.
-4. Route the decision via `triage_item(item_id, action=..., ...)`. Source URL + metadata carry forward automatically onto `brain_dump` inbox items and new `initiative` rows — do not re-paste them.
+4. Ask Brendan what to do. Valid actions: `brain_dump`, `initiative`, `thrivenote`, `daily_note`, `discard`. Offer suggestions based on content (e.g. "This looks like a review request from Orion — brain dump with urgency=2?") but let him decide.
+5. Route the decision via `triage_item(item_id, action=..., ...)`. Source URL + metadata carry forward automatically onto `brain_dump` inbox items and new `initiative` rows — do not re-paste them.
 
 **Destination-specific handling:**
 
@@ -111,6 +116,8 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 - After walking the queue, offer `clear_triage_queue()` to clean up resolved items.
 
 **Capture-time flags** — each queue item may include a `flags` dict set in the Chrome extension compose popup. Always surface these when presenting an item, and act on them during the triage conversation:
+
+- `auto_file: true` → Brendan has pre-decided that **you** should handle this without asking. Sweep these at the top of the walk (see step 2 of "The walk" above). Do NOT prompt during the sweep unless genuinely stuck. Report per-item what you did and where. Other flags on the same item still fire as post-resolution side-effects (e.g. `auto_file + needs_jira` → file + draft+create the ticket + `add_external_ref`, all without prompting).
 
 - `is_brain_dump: true` → Brendan has pre-decided the destination. **Skip** the "what should I do with this?" question and route straight to brain_dump. Still confirm the brain_dump fields (title, description, complexity, urgency, initiative_slug, target_week) before calling `triage_item` — the destination is decided but the metadata isn't. Other flags still apply as post-resolution side-effects.
 
@@ -175,7 +182,7 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
      Confirm placement + filename with Brendan, then write.
   5. **Resolve the queue item** as `mark_resolved` (the file is the action). Or alongside `brain_dump` if there's a follow-up action embedded ("ping them about X next week").
 
-Multiple flags may be set. Handle in this order: **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_research / needs_pr_review / needs_meeting / needs_reply / is_decision / is_person** as post-resolution side-effects.
+Multiple flags may be set. Handle in this order: **auto_file** (if set, the whole item is handled in the sweep step — same destination + side-effect logic below, just without prompting) → **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_research / needs_pr_review / needs_meeting / needs_reply / is_decision / is_person** as post-resolution side-effects.
 
 ### Queue Concurrency (multi-agent coordination)
 

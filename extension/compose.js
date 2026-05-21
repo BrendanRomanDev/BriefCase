@@ -27,6 +27,7 @@ const $flagMeeting = document.getElementById("flag-meeting");
 const $flagReply = document.getElementById("flag-reply");
 const $flagDecision = document.getElementById("flag-decision");
 const $flagPerson = document.getElementById("flag-person");
+const $flagAutoFile = document.getElementById("flag-auto-file");
 const $epicBlock = document.getElementById("epic-block");
 const $epicHint = document.getElementById("epic-hint");
 const $meetingBlock = document.getElementById("meeting-block");
@@ -120,6 +121,7 @@ function collectFlags() {
   if ($flagReply.checked) flags.needs_reply = true;
   if ($flagDecision.checked) flags.is_decision = true;
   if ($flagPerson.checked) flags.is_person = true;
+  if ($flagAutoFile.checked) flags.auto_file = true;
   const epic = $epicHint.value.trim();
   if (epic && $flagJira.checked) flags.epic_hint = epic;
   if ($flagMeeting.checked) {
