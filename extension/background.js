@@ -201,9 +201,79 @@ async function notify(title, message) {
   }
 }
 
+// ---- Kudos compose ----
+//
+// Kudos captures don't come from a page selection — they're standalone
+// shout-outs Brendan wants to draft + file. We open the compose window
+// with kudos mode pre-flagged so the form adapts and the resulting clip
+// carries flags.kudos = true.
+
+async function openKudosCompose() {
+  // Try to grab the active tab so we have something to anchor source_url
+  // to if Brendan is on a page where the kudos was sparked. Falls back
+  // to no anchor — kudos doesn't require one.
+  let pageUrl = null;
+  let pageTitle = null;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) {
+      pageUrl = tab.url || null;
+      pageTitle = tab.title || null;
+    }
+  } catch (err) {
+    console.warn("BriefCase: kudos tab lookup failed", err);
+  }
+
+  const baseMetadata = {
+    capture_type: "kudos",
+    page_url: pageUrl,
+    page_title: pageTitle,
+  };
+
+  const baseClip = {
+    source: "kudos",
+    content: "",
+    source_url: pageUrl,
+    title: null,
+    metadata: baseMetadata,
+  };
+
+  await chrome.storage.session.set({
+    [PENDING_CAPTURE_KEY]: {
+      baseClip,
+      capture_type: "kudos",
+      source_title: null,
+      source_url: pageUrl,
+      initial_content: "",
+      kudos_mode: true,
+    },
+  });
+
+  chrome.windows.create({
+    url: chrome.runtime.getURL("compose.html"),
+    type: "popup",
+    width: COMPOSE_WIDTH,
+    height: COMPOSE_HEIGHT,
+    focused: true,
+  });
+}
+
 // ---- Message handlers (popup + compose) ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "OPEN_KUDOS_COMPOSE") {
+    (async () => {
+      try {
+        await openKudosCompose();
+        sendResponse({ ok: true });
+      } catch (err) {
+        console.error("BriefCase: open kudos compose failed", err);
+        sendResponse({ ok: false, error: String(err.message || err) });
+      }
+    })();
+    return true;
+  }
+
   if (msg?.type === "HEALTH_CHECK") {
     (async () => {
       try {
@@ -229,6 +299,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: true, data: result });
       } catch (err) {
         console.error("BriefCase: send failed", err);
+        sendResponse({ ok: false, error: String(err.message || err) });
+      }
+    })();
+    return true;
+  }
+
+  if (msg?.type === "LIST_PENDING_TRIAGE") {
+    (async () => {
+      try {
+        const { url, token } = await getSidecarConfig();
+        if (!token) throw new Error("Auth token not configured.");
+        const limit = Math.max(1, Math.min(parseInt(msg.limit, 10) || 10, 50));
+        const r = await fetch(`${url}/triage-pending?limit=${limit}`, {
+          headers: { "X-BriefCase-Token": token },
+        });
+        if (!r.ok) {
+          const detail = await r.text().catch(() => "");
+          throw new Error(`Sidecar /triage-pending returned ${r.status}${detail ? ` - ${detail}` : ""}`);
+        }
+        const data = await r.json();
+        sendResponse({ ok: true, data });
+      } catch (err) {
+        console.warn("BriefCase: list pending triage failed", err);
         sendResponse({ ok: false, error: String(err.message || err) });
       }
     })();

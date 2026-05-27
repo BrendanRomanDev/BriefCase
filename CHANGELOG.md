@@ -1,5 +1,124 @@
 # BriefCase Changelog
 
+## Kudos action + draft-skill destination formatting — 2026-05-26
+
+New end-to-end kudos drafting flow, plus a draft-skill formatting fix that resolves a long-standing Google Chat paste pain point.
+
+### Draft skill (`~/.dotfiles/claude/commands-shared/draft.md`)
+
+Added a **"Destination Formatting"** section. Voice mode (informal/formal) is now independent from destination (`markdown` / `google-chat` / `slack` / `plaintext`):
+
+- `markdown` (default) — full Github-flavored markdown.
+- `google-chat` — NO `*bold*`, NO `_italic_`, NO `[text](url)` link syntax. Bare URLs only. Chat doesn't render markdown, so any formatting char pastes as literal noise that Brendan has to clean up by hand.
+- `slack` — treat like google-chat (Slack has its own mrkdwn dialect, but Brendan doesn't lean on it).
+- `plaintext` — no formatting chars at all, no bullets.
+
+The sidecar `/draft` endpoint accepts a new `destination` field (defaults to `google-chat` because that's the dominant extension use case) and injects the destination rules into the prompt. The extension's "Draft now" button passes `destination: "google-chat"` explicitly.
+
+### Kudos capture path
+
+- **Extension popup** now has a dedicated **Kudos** button. Clicking it opens the compose window in kudos mode: kudos banner instead of page-source block, recipient field surfaced, content + context textareas relabeled for kudos prompts, `flags.kudos = true` pre-set.
+- **Compose form** also got a `flags.kudos` checkbox in the "What is this?" section so existing captures (e.g. a chat message you want to shout out) can be flagged for kudos drafting on the fly. The recipient field reveals when the checkbox is on; the optional `flags.kudos_recipient` rides along with the capture.
+- **Wire format:** existing `/clip` endpoint, no schema changes. `kudos` and `kudos_recipient` are flags like any other.
+
+### Kudos triage destination
+
+`triage_item` now accepts `action='kudos'`. Like `thrivenote`, the agent owns the file write — Kit drafts in Brendan's voice with destination=google-chat, gets approval, appends to `~/Notes/ThriveNotes/kudos/YYYY-kudos.md` (creates folder + year file if missing, read-then-append), pbcopies, then calls `triage_item(action='kudos', resolution_note='<recipient> → <path>')` to close the queue item.
+
+Entry format:
+```
+## YYYY-MM-DD — <Recipient>
+
+<approved draft body>
+
+_Context:_ <one-line summary of what triggered it>
+```
+
+### Auto-sweep carveout for kudos
+
+Even when `auto_file: true` is set, kudos items do NOT silently file. The sweep drafts the kudos and stages it; Kit pauses for Brendan's approval before appending to ThriveNotes + pbcopying. Tone matters too much to file a shout-out silently. Documented in all three instruction surfaces (kit.md, kit-lite.md, SERVER_INSTRUCTIONS).
+
+### Triple instruction sync
+
+Updated all three Kit instruction surfaces with the `kudos: true` flag handler, the `kudos` triage destination, and the auto-sweep carveout: `.claude/commands/kit.md`, `~/.dotfiles/claude/commands-work/kit-lite.md`, and `SERVER_INSTRUCTIONS` in `briefcase/mcp_server/server.py`.
+
+## Capture form redesign + attach threading + auto-run tangent dispatch — 2026-05-25
+
+Three intertwined improvements to the capture → triage → action flow.
+
+### Capture form (Chrome extension `compose.html`)
+
+The flat 10-checkbox grid is gone. Flags now group by what they actually mean to Kit:
+
+- **What is this?** — `is_brain_dump`, `is_decision`, `is_person`
+- **Context to gather** — `needs_code_research`, `search_around`, `needs_web_research` (new)
+- **Actions Kit takes** — `needs_jira`, `needs_pr_review`, `needs_meeting`, `needs_reply`
+- **How Kit handles this** (visually set apart with a dashed border) — `auto_file` (UI label: "Auto-run (Kit acts autonomously)")
+
+Sections stack — a single capture can check across all four. The new **web research** flag complements the two existing research flags for things that live outside the codebase (industry practice, vendor docs, comparative analysis). Auto-tags the resulting brain_dump/initiative with `web-research`.
+
+Wire format kept stable. `flags.auto_file` is still the on-the-wire name; only the UI label changed. Future-me note: if a downstream consumer (Kit instructions, MCP tooling, queries) ever needs renaming, do it as a separate pass — UI/wire decoupling held the line on this one.
+
+### Capture attachment ("Attach to existing capture")
+
+New compose-form dropdown. Pick a recent pending queue item; the new capture becomes a child of that parent. One-deep — if you try to attach to a row that already has a parent, the attachment collapses to the grandparent so the tree never goes deeper than two levels.
+
+Selecting a parent grays out the "What is this?" and "How Kit handles this" sections — those decisions belong to the parent. The child contributes its own content + source URL + any context/action flags. At triage time, Kit sees the composite (parent + all children) as ONE thing; resolving the parent resolves children too, unions their flag-derived tags, and concatenates source URLs into `source_metadata.source_urls`.
+
+Schema impact: one new column, `triage_queue.parent_id`. Idempotent migration in `database.py:_migrate`.
+
+New sidecar endpoints:
+- `GET /triage-pending?limit=N` — populates the attach dropdown (top-level pending only, hides children)
+- `GET /tangent-available` — host-level capability check used by the startup detection below
+
+### Auto-run + tangent dispatch
+
+`auto_file: true` no longer just files inline. When WezTerm + the tangent skill are present, Kit dispatches the whole composite (parent + children) to a fresh Claude tab via the `Skill` tool — `tangent-teach` for research-only flag sets, plain `tangent` when any action flag is involved. The new tab inherits Kit's cwd by default and gets a handoff blurb with all captured content, all source URLs, the unioned flag set, and `user_context`.
+
+`settings.yaml` got a `tangent` block:
+
+```yaml
+tangent:
+  enabled: auto              # auto | true | false. auto = detect at startup.
+  skill_work: tangent
+  skill_research: tangent-teach
+  attach_dropdown_limit: 10
+```
+
+Detection (`shutil.which("wezterm")` + SKILL.md existence) runs through `briefcase/sidecar/server.py:detect_tangent_available` and `briefcase/mcp_server/config.py:resolve_tangent_config`. When detection fails (no WezTerm, or `enabled: false`), the auto-run sweep silently falls back to the previous inline filing behavior — no error, no user-visible difference, just no tangent.
+
+New MCP tool **`get_runtime_capabilities`** exposes the result. Kit calls it once at the top of every triage walk and caches the answer.
+
+### Kit / kit-lite instruction sync
+
+Both `.claude/commands/kit.md` and `~/.dotfiles/claude/commands-work/kit-lite.md` updated to describe the new flow with a worked example showing the exact call sequence for an auto-run + research composite (the obvious wrong path — calling `triage_item(..., action='brain_dump')` inline — is called out explicitly). `SERVER_INSTRUCTIONS` in `server.py` kept in sync per the project's dual-instruction rule.
+
+`kit.md` is now bound at user level via dotfiles' `command-bindings.conf` so `/kit` works from any cwd, sourced canonically from the BriefCase repo (no copy, no symlink-in-place — the binding row points at the live file).
+
+### Files touched
+
+- `extension/compose.html` (regrouped sections, new attach dropdown, new web-research checkbox)
+- `extension/compose.js` (flag collection, attach inheritance, dropdown loader)
+- `extension/background.js` (new `LIST_PENDING_TRIAGE` handler)
+- `briefcase/sidecar/server.py` (`ClipIn.attach_to_id`, `/triage-pending`, `/tangent-available`)
+- `briefcase/mcp_server/database.py` (`parent_id` column + migration, `get_triage_children`, `get_triage_item_with_children`, `resolve_triage_item_with_children`)
+- `briefcase/mcp_server/tools/get_triage_queue.py` (nested children)
+- `briefcase/mcp_server/tools/triage_item.py` (child cascade, flag-union, URL concat, refuse-child-direct guard, `web-research` tag mapping)
+- `briefcase/mcp_server/tools/get_runtime_capabilities.py` (new)
+- `briefcase/mcp_server/config.py` (`resolve_tangent_config`)
+- `briefcase/mcp_server/server.py` (tool registration, `SERVER_INSTRUCTIONS` updates, version bump 0.12.0 → 0.13.0)
+- `settings.yaml` (`tangent:` block)
+- `.claude/commands/kit.md` (triage walk rewrite, web-research flag, composite handling, tangent dispatch)
+- `~/.dotfiles/claude/commands-work/kit-lite.md` (matching rewrite + worked example)
+- `~/.dotfiles/claude/command-bindings.conf` (new row: `kit.md` → `~/Programming/BriefCase/.claude/commands/kit.md`)
+
+### Manual step after pulling
+
+- **Reload the Chrome extension** at `chrome://extensions` so the new compose flow + attach dropdown wire in
+- **Restart any open `/kit` or `/kit-lite` sessions** so they pick up the new instructions (command files are read at session start)
+
+---
+
 ## Packaging follow-ups — 2026-05-16
 
 - **`scripts/health-check.sh`** — doctor script that reports the status of every component (venv, dependencies, DB integrity, MCP registration, sidecar, token, launchd) in one pass. First stop when something looks off. Wired into the troubleshooting sections of `README.md` and `docs/INSTALL.md`.

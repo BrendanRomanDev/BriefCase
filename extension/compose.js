@@ -23,17 +23,26 @@ const $flagJira = document.getElementById("flag-jira");
 const $flagCodeResearch = document.getElementById("flag-code-research");
 const $flagPrReview = document.getElementById("flag-pr-review");
 const $flagSearchAround = document.getElementById("flag-search-around");
+const $flagWebResearch = document.getElementById("flag-web-research");
 const $flagMeeting = document.getElementById("flag-meeting");
 const $flagReply = document.getElementById("flag-reply");
 const $flagDecision = document.getElementById("flag-decision");
 const $flagPerson = document.getElementById("flag-person");
+const $flagKudos = document.getElementById("flag-kudos");
 const $flagAutoFile = document.getElementById("flag-auto-file");
+const $kudosBanner = document.getElementById("kudos-banner");
+const $kudosRecipientBlock = document.getElementById("kudos-recipient-block");
+const $kudosRecipient = document.getElementById("kudos-recipient");
+const $sourceTitleBlock = document.getElementById("source-title-block");
 const $epicBlock = document.getElementById("epic-block");
 const $epicHint = document.getElementById("epic-hint");
 const $meetingBlock = document.getElementById("meeting-block");
 const $meetingAttendees = document.getElementById("meeting-attendees");
 const $personBlock = document.getElementById("person-block");
 const $personName = document.getElementById("person-name");
+const $attachParent = document.getElementById("attach-parent");
+const $sectionIdentity = document.getElementById("section-identity");
+const $sectionDispatch = document.getElementById("section-dispatch");
 
 const $draftNow = document.getElementById("draft-now");
 const $draftResult = document.getElementById("draft-result");
@@ -82,6 +91,27 @@ async function readClipboardUrl() {
   }
 }
 
+function applyKudosMode() {
+  // Pre-flag the capture as kudos, swap the page-source banner for the
+  // kudos banner, reveal the recipient field, and switch the textarea
+  // labels/placeholders to kudos-shaped prompts.
+  if ($sourceTitleBlock) $sourceTitleBlock.style.display = "none";
+  if ($kudosBanner) $kudosBanner.style.display = "";
+  if ($kudosRecipientBlock) $kudosRecipientBlock.style.display = "";
+  if ($flagKudos) $flagKudos.checked = true;
+
+  const contentLabel = document.querySelector(".content-block .field-label");
+  if (contentLabel) contentLabel.textContent = "What did they do? (the kudos-worthy thing)";
+  if ($content) {
+    $content.placeholder = "e.g. Randall unblocked the PMT data model thing — stayed late debugging the override resolver until it lit up green.";
+  }
+  const contextLabel = document.querySelector(".context-block .field-label");
+  if (contextLabel) contextLabel.textContent = "Any extra context (optional — tone, where to post, related work)";
+  if ($context) {
+    $context.placeholder = "e.g. wanted to call this out in the #kudos channel; bonus points if you can tie it to the PMT rebuild push.";
+  }
+}
+
 async function load() {
   const data = await chrome.storage.session.get([PENDING_CAPTURE_KEY]);
   pending = data[PENDING_CAPTURE_KEY] || null;
@@ -92,7 +122,11 @@ async function load() {
     return;
   }
 
-  $sourceTitle.textContent = pending.source_title || "(no title)";
+  if (pending.kudos_mode) {
+    applyKudosMode();
+  } else {
+    $sourceTitle.textContent = pending.source_title || "(no title)";
+  }
   $content.value = pending.initial_content || "";
 
   // Precedence for source URL:
@@ -107,21 +141,44 @@ async function load() {
   }
 
   refreshUrlHint();
-  $context.focus();
+  if (pending.kudos_mode && $kudosRecipient) {
+    $kudosRecipient.focus();
+  } else {
+    $context.focus();
+  }
+}
+
+function isAttachedToParent() {
+  return !!($attachParent && $attachParent.value);
 }
 
 function collectFlags() {
   const flags = {};
-  if ($flagBrainDump.checked) flags.is_brain_dump = true;
+  const inherits = isAttachedToParent();
+  // Identity and dispatch flags belong to the parent when attached.
+  // Other checkboxes (context / actions) remain user-driven on the child.
+  if (!inherits) {
+    if ($flagBrainDump.checked) flags.is_brain_dump = true;
+    if ($flagDecision.checked) flags.is_decision = true;
+    if ($flagPerson.checked) flags.is_person = true;
+    if ($flagKudos && $flagKudos.checked) flags.kudos = true;
+    if ($flagAutoFile.checked) flags.auto_file = true;
+    if ($flagPerson.checked) {
+      const name = $personName.value.trim();
+      if (name) flags.person_name = name;
+    }
+    if ($flagKudos && $flagKudos.checked && $kudosRecipient) {
+      const recipient = $kudosRecipient.value.trim();
+      if (recipient) flags.kudos_recipient = recipient;
+    }
+  }
   if ($flagJira.checked) flags.needs_jira = true;
   if ($flagCodeResearch.checked) flags.needs_code_research = true;
   if ($flagPrReview.checked) flags.needs_pr_review = true;
   if ($flagSearchAround.checked) flags.search_around = true;
+  if ($flagWebResearch.checked) flags.needs_web_research = true;
   if ($flagMeeting.checked) flags.needs_meeting = true;
   if ($flagReply.checked) flags.needs_reply = true;
-  if ($flagDecision.checked) flags.is_decision = true;
-  if ($flagPerson.checked) flags.is_person = true;
-  if ($flagAutoFile.checked) flags.auto_file = true;
   const epic = $epicHint.value.trim();
   if (epic && $flagJira.checked) flags.epic_hint = epic;
   if ($flagMeeting.checked) {
@@ -133,10 +190,6 @@ function collectFlags() {
         .filter(Boolean);
       if (attendees.length) flags.meeting_attendees = attendees;
     }
-  }
-  if ($flagPerson.checked) {
-    const name = $personName.value.trim();
-    if (name) flags.person_name = name;
   }
   return Object.keys(flags).length > 0 ? flags : null;
 }
@@ -165,6 +218,14 @@ function syncPersonVisibility() {
   }
 }
 
+function syncKudosVisibility() {
+  if (!$flagKudos || !$kudosRecipientBlock) return;
+  // In kudos-mode launches the recipient field is already shown via
+  // applyKudosMode and the checkbox is pre-checked. From a regular capture,
+  // toggling the kudos checkbox reveals/hides the recipient field too.
+  $kudosRecipientBlock.style.display = $flagKudos.checked ? "" : "none";
+}
+
 function buildClipFromForm() {
   const captured = $content.value.trimEnd();
   const context = $context.value.trim();
@@ -186,13 +247,59 @@ function buildClipFromForm() {
     metadata.url_source = "user_edited";
   }
 
-  return {
+  const clip = {
     ...pending.baseClip,
     content: combined,
     source_url: urlValue || null,
     metadata,
     flags: collectFlags(),
   };
+  const parentId = $attachParent && parseInt($attachParent.value, 10);
+  if (parentId) clip.attach_to_id = parentId;
+  return clip;
+}
+
+function formatAge(isoTimestamp) {
+  if (!isoTimestamp) return "";
+  const then = new Date(isoTimestamp);
+  if (Number.isNaN(then.getTime())) return "";
+  const seconds = Math.max(0, Math.floor((Date.now() - then.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+async function loadAttachOptions() {
+  if (!$attachParent) return;
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "LIST_PENDING_TRIAGE", limit: 10 });
+    if (!resp || !resp.ok || !Array.isArray(resp.data)) return;
+    for (const item of resp.data) {
+      const opt = document.createElement("option");
+      opt.value = String(item.id);
+      const label = item.title || item.content_preview || `#${item.id}`;
+      const age = formatAge(item.captured_at);
+      opt.textContent = age ? `#${item.id} · ${label} (${age})` : `#${item.id} · ${label}`;
+      $attachParent.appendChild(opt);
+    }
+  } catch (err) {
+    console.warn("BriefCase: loadAttachOptions failed", err);
+  }
+}
+
+function syncAttachInheritance() {
+  if (!$attachParent || !$sectionIdentity || !$sectionDispatch) return;
+  if (isAttachedToParent()) {
+    $sectionIdentity.classList.add("inherited-from-parent");
+    $sectionDispatch.classList.add("inherited-from-parent");
+  } else {
+    $sectionIdentity.classList.remove("inherited-from-parent");
+    $sectionDispatch.classList.remove("inherited-from-parent");
+  }
 }
 
 async function send() {
@@ -253,6 +360,9 @@ async function draftNow() {
         context: context || null,
         tone: "informal",
         mode: "reply",
+        // Extension captures are almost always Google Chat or web clips.
+        // Default to google-chat so markdown chars don't paste as literal noise.
+        destination: "google-chat",
       },
     },
     (resp) => {
@@ -323,6 +433,17 @@ $flagPerson.addEventListener("change", () => {
   if ($flagPerson.checked) $personName.focus();
 });
 
+if ($flagKudos) {
+  $flagKudos.addEventListener("change", () => {
+    syncKudosVisibility();
+    if ($flagKudos.checked && $kudosRecipient) $kudosRecipient.focus();
+  });
+}
+
+if ($attachParent) {
+  $attachParent.addEventListener("change", syncAttachInheritance);
+}
+
 document.addEventListener("keydown", (e) => {
   const isCmd = e.metaKey || e.ctrlKey;
   if (isCmd && e.key === "Enter") {
@@ -338,3 +459,4 @@ document.addEventListener("keydown", (e) => {
 });
 
 load();
+loadAttachOptions();

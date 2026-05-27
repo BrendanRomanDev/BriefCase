@@ -1,10 +1,20 @@
 const $health = document.getElementById("health");
 const $options = document.getElementById("options-link");
+const $openKudos = document.getElementById("open-kudos");
 
 $options.addEventListener("click", (e) => {
   e.preventDefault();
   chrome.runtime.openOptionsPage();
 });
+
+if ($openKudos) {
+  $openKudos.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "OPEN_KUDOS_COMPOSE" }, () => {
+      // Close the popup once compose is on its way.
+      window.close();
+    });
+  });
+}
 
 chrome.runtime.sendMessage({ type: "HEALTH_CHECK" }, (resp) => {
   if (!resp) {

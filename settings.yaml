@@ -20,6 +20,17 @@ printer:
 sidecar:
   port: 8989
 
+# Tangent dispatch (WezTerm-only). When `auto`, Kit only spawns tangents
+# if `wezterm` is on PATH AND a tangent SKILL.md is installed. Set to
+# `false` to disable the feature; `true` to force on (will fail gracefully
+# if WezTerm isn't running). When disabled, auto-run items fall back to
+# Kit's inline resolution behavior.
+tangent:
+  enabled: auto
+  skill_work: tangent           # for action-flagged auto-run items
+  skill_research: tangent-teach  # for research-only auto-run items
+  attach_dropdown_limit: 10
+
 # External systems. Used by external_refs to derive canonical URLs from
 # short keys (e.g. 'THRIV-13413' -> 'https://.../browse/THRIV-13413').
 integrations:

@@ -31,6 +31,45 @@ def load_settings(settings_path: Optional[str] = None) -> dict:
     return settings
 
 
+def resolve_tangent_config(settings: Optional[dict] = None) -> dict:
+    """Resolve the runtime tangent dispatch config.
+
+    Reads `tangent.enabled` (auto | true | false) from settings.yaml. When
+    `auto`, performs the same wezterm + SKILL.md detection the sidecar
+    uses. Returns a dict with the boolean `available`, the source `reason`
+    if unavailable, and the resolved skill names for work vs research.
+    """
+    if settings is None:
+        settings = load_settings()
+    cfg = settings.get("tangent") or {}
+    skill_work = cfg.get("skill_work") or "tangent"
+    skill_research = cfg.get("skill_research") or "tangent-teach"
+    attach_limit = int(cfg.get("attach_dropdown_limit") or 10)
+
+    enabled_setting = cfg.get("enabled", "auto")
+    if enabled_setting is False or enabled_setting == "false":
+        return {
+            "available": False,
+            "reason": "tangent.enabled is false in settings.yaml",
+            "skill_work": skill_work,
+            "skill_research": skill_research,
+            "attach_dropdown_limit": attach_limit,
+        }
+
+    # Both `true` and `auto` perform detection; `true` ignores the result
+    # for the boolean but the reason is still surfaced as informational.
+    from briefcase.sidecar.server import detect_tangent_available
+    detected, reason = detect_tangent_available()
+    available = True if enabled_setting is True or enabled_setting == "true" else detected
+    return {
+        "available": available,
+        "reason": reason if not detected else None,
+        "skill_work": skill_work,
+        "skill_research": skill_research,
+        "attach_dropdown_limit": attach_limit,
+    }
+
+
 def load_user_profile(profile_path: Optional[str] = None) -> dict:
     """Load user profile from YAML."""
     if profile_path is None:

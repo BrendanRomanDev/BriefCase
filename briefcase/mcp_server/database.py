@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS triage_queue (
     resolved_at TIMESTAMP,
     claimed_at TIMESTAMP,
     claimed_by TEXT,
+    parent_id INTEGER REFERENCES triage_queue(id),
     captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -173,6 +174,11 @@ def _migrate(conn):
         conn.execute("ALTER TABLE triage_queue ADD COLUMN claimed_at TIMESTAMP")
     if 'claimed_by' not in triage_columns:
         conn.execute("ALTER TABLE triage_queue ADD COLUMN claimed_by TEXT")
+    if 'parent_id' not in triage_columns:
+        conn.execute(
+            "ALTER TABLE triage_queue ADD COLUMN parent_id INTEGER "
+            "REFERENCES triage_queue(id)"
+        )
 
     conn.commit()
 
@@ -537,43 +543,126 @@ def _decode_triage_row(row) -> dict:
 
 
 def create_triage_item(conn, source: str, content: str, source_url: str = None,
-                       title: str = None, metadata=None, flags=None) -> int:
+                       title: str = None, metadata=None, flags=None,
+                       parent_id: int = None) -> int:
     """Create a triage queue item, return its ID.
 
     flags is an optional dict of capture-time signals about what work this
     item will need (e.g. {"needs_jira": true, "needs_code_review": false,
     "search_around": true, "epic_hint": "THRIV-13413"}). Stored as JSON.
     Kit reads flags during the triage walk and adapts behavior accordingly.
+
+    parent_id, if set, attaches this item as a child of an existing triage
+    queue item. Children are surfaced as composite context under their
+    parent at triage time, and resolve together when the parent resolves.
+    If parent_id refers to a row that itself has a parent, the attachment
+    is collapsed to the grandparent so the tree stays one-deep.
     """
     if metadata is not None and not isinstance(metadata, str):
         metadata = json.dumps(metadata)
     if flags is not None and not isinstance(flags, str):
         flags = json.dumps(flags)
+
+    if parent_id is not None:
+        parent_row = conn.execute(
+            "SELECT parent_id FROM triage_queue WHERE id = ?", (parent_id,)
+        ).fetchone()
+        if parent_row and parent_row['parent_id']:
+            parent_id = parent_row['parent_id']
+
     cursor = conn.execute(
         """INSERT INTO triage_queue (source, source_url, title, content,
-           metadata, flags, captured_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (source, source_url, title, content, metadata, flags,
+           metadata, flags, parent_id, captured_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (source, source_url, title, content, metadata, flags, parent_id,
          datetime.now(UTC).isoformat())
     )
     conn.commit()
     return cursor.lastrowid
 
 
-def get_triage_items(conn, status: str = 'pending', limit: int = None) -> list:
-    """Query triage queue items, optionally filtered by status."""
+def get_triage_children(conn, parent_id: int) -> list:
+    """Return all child triage items attached to a given parent, oldest
+    first. Each child row is decoded the same as a top-level item."""
+    rows = conn.execute(
+        "SELECT * FROM triage_queue WHERE parent_id = ? ORDER BY captured_at ASC",
+        (parent_id,)
+    ).fetchall()
+    return [_decode_triage_row(r) for r in rows]
+
+
+def get_triage_item_with_children(conn, item_id: int) -> Optional[dict]:
+    """Get a triage item plus its attached children as `children: [...]`.
+
+    Returns None if the item doesn't exist. Children list is empty if there
+    are no attachments.
+    """
+    item = get_triage_item(conn, item_id)
+    if not item:
+        return None
+    item['children'] = get_triage_children(conn, item_id)
+    return item
+
+
+def get_triage_items(conn, status: str = 'pending', limit: int = None,
+                     include_children: bool = False,
+                     attach_children: bool = False) -> list:
+    """Query triage queue items, optionally filtered by status.
+
+    include_children: if False (default), child items (rows with parent_id
+    set) are hidden from the result. They surface only via their parent's
+    `children` array when attach_children=True.
+
+    attach_children: if True, each returned top-level item gets a
+    `children: [...]` field populated from get_triage_children().
+    """
     query = "SELECT * FROM triage_queue"
+    conditions = []
     params = []
     if status:
-        query += " WHERE status = ?"
+        conditions.append("status = ?")
         params.append(status)
+    if not include_children:
+        conditions.append("parent_id IS NULL")
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
     query += " ORDER BY captured_at ASC"
     if limit:
         query += " LIMIT ?"
         params.append(limit)
 
     rows = conn.execute(query, params).fetchall()
-    return [_decode_triage_row(r) for r in rows]
+    items = [_decode_triage_row(r) for r in rows]
+    if attach_children:
+        for item in items:
+            item['children'] = get_triage_children(conn, item['id'])
+    return items
+
+
+def resolve_triage_item_with_children(conn, item_id: int,
+                                      resolution: str) -> int:
+    """Resolve a triage item and any attached children with the same
+    resolution label. Returns the count of rows actually resolved (parent
+    plus children that flipped).
+
+    Children that are already resolved are skipped. The parent is resolved
+    iff it was pending or in_progress (same rule as resolve_triage_item).
+    """
+    now = datetime.now(UTC).isoformat()
+    parent_cursor = conn.execute(
+        """UPDATE triage_queue
+           SET status = 'resolved', resolution = ?, resolved_at = ?
+           WHERE id = ? AND status IN ('pending', 'in_progress')""",
+        (resolution, now, item_id)
+    )
+    child_cursor = conn.execute(
+        """UPDATE triage_queue
+           SET status = 'resolved', resolution = ?, resolved_at = ?
+           WHERE parent_id = ? AND status IN ('pending', 'in_progress')""",
+        (resolution, now, item_id)
+    )
+    conn.commit()
+    return parent_cursor.rowcount + child_cursor.rowcount
 
 
 def get_triage_item(conn, item_id: int) -> Optional[dict]:

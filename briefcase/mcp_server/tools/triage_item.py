@@ -1,11 +1,14 @@
 """MCP Tool: triage_item - Resolve a triage queue item into its destination."""
 
+import json
 import logging
 from typing import Optional
 from briefcase.mcp_server.database import (
     get_db_connection,
     get_triage_item,
+    get_triage_children,
     resolve_triage_item,
+    resolve_triage_item_with_children,
     create_inbox_item,
     create_initiative,
     get_initiative_by_slug,
@@ -16,7 +19,92 @@ logger = logging.getLogger(__name__)
 
 
 VALID_ACTIONS = {"brain_dump", "initiative", "thrivenote", "daily_note",
-                 "discard", "mark_resolved"}
+                 "kudos", "discard", "mark_resolved"}
+
+
+# Map from queue-item flag key to tag applied to the resulting brain_dump
+# or initiative. Flags that don't map to a tag (e.g. epic_hint, person_name,
+# auto_file, is_decision) are not in this table - they're handled elsewhere
+# or are purely advisory at capture time.
+FLAG_TO_TAG = {
+    'needs_code_research': 'needs_code_context',
+    'needs_code_review': 'needs_code_context',  # legacy alias
+    'needs_pr_review': 'needs_pr_review',
+    'needs_web_research': 'web-research',
+}
+
+
+def _merge_flags_and_urls(parent_item: dict, children: list) -> tuple[dict, list]:
+    """Union flags across parent + children (any-true wins) and collect all
+    distinct source_urls in capture order. Returns (merged_flags, urls).
+    """
+    merged: dict = {}
+    urls: list = []
+    seen_urls: set = set()
+
+    def _ingest(item: dict) -> None:
+        flags = item.get('flags') or {}
+        if isinstance(flags, dict):
+            for k, v in flags.items():
+                # Any-true wins for booleans; first-seen wins for everything else
+                if isinstance(v, bool):
+                    merged[k] = merged.get(k, False) or v
+                elif k not in merged:
+                    merged[k] = v
+        url = item.get('source_url')
+        if url and url not in seen_urls:
+            urls.append(url)
+            seen_urls.add(url)
+
+    _ingest(parent_item)
+    for child in children:
+        _ingest(child)
+    return merged, urls
+
+
+def _derive_tags(merged_flags: dict, base_tags: Optional[list]) -> list:
+    """Build the effective tag list for the resulting brain_dump/initiative.
+    Starts from caller-supplied base_tags (if any), then adds tags from any
+    matching flag in FLAG_TO_TAG. Deduplicates while preserving order.
+    """
+    effective = list(base_tags) if base_tags else []
+    for flag_key, tag in FLAG_TO_TAG.items():
+        if merged_flags.get(flag_key) and tag not in effective:
+            effective.append(tag)
+    return effective
+
+
+def _build_combined_metadata(parent_item: dict, children: list,
+                             merged_urls: list) -> dict:
+    """Build the source_metadata blob carried onto the resulting
+    brain_dump/initiative. Starts from the parent's metadata, layers in
+    a list of source_urls (parent + all children) and a child_captures
+    array summarizing attached items. If there are no children, the
+    parent's metadata is returned essentially unchanged.
+    """
+    base = parent_item.get('metadata') or {}
+    if isinstance(base, str):
+        try:
+            base = json.loads(base)
+        except (json.JSONDecodeError, TypeError):
+            base = {}
+    if not isinstance(base, dict):
+        base = {}
+
+    metadata = dict(base)
+    if len(merged_urls) > 1:
+        metadata['source_urls'] = merged_urls
+    if children:
+        metadata['child_captures'] = [
+            {
+                'id': c['id'],
+                'source': c.get('source'),
+                'source_url': c.get('source_url'),
+                'content': (c.get('content') or '')[:500],
+            }
+            for c in children
+        ]
+    return metadata
 
 
 async def triage_item(
@@ -50,6 +138,11 @@ async def triage_item(
         rule). Use resolution_note to record what was filed.
       - daily_note: mark the queue item resolved — the agent is expected
         to have called plan_daily separately to add this to a day's notes.
+      - kudos: mark the queue item resolved — the agent is expected to
+        have drafted the kudos in Brendan's voice (destination=google-chat),
+        gotten approval, pbcopied, AND appended an entry to
+        ~/Notes/ThriveNotes/kudos/YYYY-kudos.md. Use resolution_note to
+        record the recipient + file path.
       - discard: mark resolved with no further action.
       - mark_resolved: generic "I handled this externally" — optionally
         pass resolution_note.
@@ -73,7 +166,26 @@ async def triage_item(
                 "message": f"Triage item #{item_id} already resolved as '{queue_item.get('resolution')}'"
             }
 
+        # Refuse to triage a child directly - children resolve via their
+        # parent. Surface the parent ID so the caller can redirect.
+        if queue_item.get('parent_id'):
+            conn.close()
+            return {
+                "status": "error",
+                "message": (
+                    f"Triage item #{item_id} is attached to #{queue_item['parent_id']}. "
+                    f"Triage the parent instead - children resolve with it."
+                )
+            }
+
+        children = get_triage_children(conn, item_id)
+        merged_flags, merged_urls = _merge_flags_and_urls(queue_item, children)
+        combined_metadata = _build_combined_metadata(queue_item, children, merged_urls)
+        primary_source_url = merged_urls[0] if merged_urls else queue_item.get('source_url')
+
         result = {"status": "success", "triage_item_id": item_id, "action": action}
+        if children:
+            result["children_resolved"] = [c['id'] for c in children]
 
         if action == "brain_dump":
             if not title:
@@ -88,19 +200,10 @@ async def triage_item(
                     return {"status": "error", "message": f"Initiative '{initiative_slug}' not found"}
                 initiative_id = initiative['id']
 
-            # Auto-derive tags from queue item flags when caller hasn't
-            # supplied an explicit tags list. needs_code_research (or legacy
-            # needs_code_review) on the queue item becomes a needs_code_context
-            # tag on the inbox item so downstream Thriveworks-repo sessions
-            # can find it via get_capture_list(tags=['needs_code_context']).
-            # needs_pr_review becomes its own tag for review-as-brendan flow.
-            effective_tags = list(tags) if tags else []
-            qflags = queue_item.get('flags') or {}
-            if isinstance(qflags, dict):
-                if (qflags.get('needs_code_research') or qflags.get('needs_code_review')) and 'needs_code_context' not in effective_tags:
-                    effective_tags.append('needs_code_context')
-                if qflags.get('needs_pr_review') and 'needs_pr_review' not in effective_tags:
-                    effective_tags.append('needs_pr_review')
+            # Tags come from caller-supplied `tags` plus any tag that
+            # FLAG_TO_TAG maps from a flag that's true on the parent or
+            # any attached child (any-true wins).
+            effective_tags = _derive_tags(merged_flags, tags)
 
             inbox_id = create_inbox_item(
                 conn,
@@ -111,8 +214,8 @@ async def triage_item(
                 initiative_id=initiative_id,
                 target_week=target_week,
                 source=queue_item.get('source'),
-                source_url=queue_item.get('source_url'),
-                source_metadata=queue_item.get('metadata'),
+                source_url=primary_source_url,
+                source_metadata=combined_metadata,
                 tags=effective_tags or None,
             )
             result["inbox_item_id"] = inbox_id
@@ -131,15 +234,7 @@ async def triage_item(
                 conn.close()
                 return {"status": "error", "message": f"Initiative '{initiative_slug}' already exists"}
 
-            # Auto-derive needs_code_context / needs_pr_review tags from
-            # queue item flags, same logic as brain_dump.
-            effective_init_tags = list(initiative_tags) if initiative_tags else []
-            qflags = queue_item.get('flags') or {}
-            if isinstance(qflags, dict):
-                if (qflags.get('needs_code_research') or qflags.get('needs_code_review')) and 'needs_code_context' not in effective_init_tags:
-                    effective_init_tags.append('needs_code_context')
-                if qflags.get('needs_pr_review') and 'needs_pr_review' not in effective_init_tags:
-                    effective_init_tags.append('needs_pr_review')
+            effective_init_tags = _derive_tags(merged_flags, initiative_tags)
 
             initiative_id = create_initiative(
                 conn,
@@ -150,8 +245,8 @@ async def triage_item(
                 tags=effective_init_tags or None,
                 repo_path=initiative_repo_path,
                 source=queue_item.get('source'),
-                source_url=queue_item.get('source_url'),
-                source_metadata=queue_item.get('metadata'),
+                source_url=primary_source_url,
+                source_metadata=combined_metadata,
             )
             result["initiative_id"] = initiative_id
             result["initiative_slug"] = initiative_slug
@@ -174,6 +269,11 @@ async def triage_item(
             if resolution_note:
                 result["resolution_note"] = resolution_note
 
+        elif action == "kudos":
+            result["message"] = "Marked as filed to kudos log"
+            if resolution_note:
+                result["resolution_note"] = resolution_note
+
         elif action == "discard":
             result["message"] = "Discarded"
 
@@ -183,7 +283,13 @@ async def triage_item(
                 result["resolution_note"] = resolution_note
 
         resolution_label = "discarded" if action == "discard" else action
-        resolved = resolve_triage_item(conn, item_id, resolution_label)
+        if children:
+            cascaded = resolve_triage_item_with_children(
+                conn, item_id, resolution_label
+            )
+            resolved = cascaded > 0
+        else:
+            resolved = resolve_triage_item(conn, item_id, resolution_label)
         conn.close()
 
         if not resolved:
@@ -204,9 +310,10 @@ TOOL_DESCRIPTION = (
     "Resolve a triage queue item by routing it into a destination: "
     "brain_dump (new inbox item), initiative (new project), thrivenote "
     "(agent filed externally), daily_note (agent added to a daily), "
-    "discard, or mark_resolved. Source URL + metadata are automatically "
-    "carried onto brain_dump and initiative destinations. Always walks "
-    "the user through the decision — do not call without their input."
+    "kudos (agent drafted shout-out + appended to ~/Notes/ThriveNotes/kudos/"
+    "YYYY-kudos.md), discard, or mark_resolved. Source URL + metadata are "
+    "automatically carried onto brain_dump and initiative destinations. "
+    "Always walks the user through the decision — do not call without their input."
 )
 TOOL_SCHEMA = {
     "type": "object",

@@ -184,25 +184,41 @@
   .hint { color: var(--muted); font-size: 11px; }
   .content-block textarea { min-height: 110px; }
   .context-block textarea { min-height: 100px; }
-  .flags-block {
+  .flags-section {
     background: var(--pane);
     border: 1px solid var(--border);
     border-radius: 6px;
     padding: 10px 12px;
   }
-  .flags-block .group-label {
+  .flags-section .group-label {
     font-weight: 600;
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--ink);
     margin-bottom: 8px;
     display: block;
   }
+  .flags-section .group-hint {
+    font-weight: 500;
+    font-size: 10px;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--muted);
+    margin-left: 6px;
+  }
+  /* Dispatch section is visually set apart - it's a modifier, not a sibling */
+  .flags-section.dispatch {
+    border-style: dashed;
+    background: transparent;
+  }
   .flags-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 6px 14px;
+  }
+  .flags-grid.single-col {
+    grid-template-columns: 1fr;
   }
   .flag-row {
     display: flex;
@@ -221,12 +237,24 @@
     accent-color: var(--accent);
     cursor: pointer;
   }
-  .epic-block {
+  /* When a parent is attached, parent-owned sections gray out */
+  .flags-section.inherited-from-parent {
+    opacity: 0.45;
+    pointer-events: none;
+  }
+  .flags-section.inherited-from-parent .group-label::after {
+    content: " · inherited from parent";
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .conditional-block {
     margin-top: 10px;
     display: none;
   }
-  .epic-block.visible { display: block; }
-  .epic-block label {
+  .conditional-block.visible { display: block; }
+  .conditional-block label {
     font-size: 11px;
     color: var(--muted);
     text-transform: uppercase;
@@ -235,9 +263,40 @@
     margin-bottom: 4px;
     display: block;
   }
-  .epic-block input {
+  .conditional-block input {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 11.5px;
+  }
+  .attach-block {
+    background: var(--pane);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .attach-block label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .attach-block select {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--pane);
+    color: var(--ink);
+    font-size: 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  .attach-block select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
   }
 </style>
 </head>
@@ -249,6 +308,16 @@
     <span id="source-title">—</span>
   </div>
 
+  <div class="source-title-block" id="kudos-banner" style="display:none;">
+    <span class="label">Kudos</span>
+    <span>Drafting a shout-out. Kit will draft, you approve, file to ThriveNotes.</span>
+  </div>
+
+  <div id="kudos-recipient-block" style="display:none;">
+    <label for="kudos-recipient" class="field-label">Who's this for?</label>
+    <input type="text" id="kudos-recipient" placeholder="e.g. Randall Hardy" autocomplete="off" spellcheck="false" />
+  </div>
+
   <div class="url-block">
     <label for="source-url" class="field-label">
       Source link
@@ -258,28 +327,60 @@
     <div class="hint">Edit if you want a more specific anchor. On Google Chat: click <strong>More actions</strong> on the message → <strong>Copy message link</strong>, then paste here (or we'll auto-paste on open).</div>
   </div>
 
-  <div class="flags-block">
-    <span class="group-label">What does this need?</span>
+  <div class="flags-section" id="section-identity">
+    <span class="group-label">What is this?</span>
     <div class="flags-grid">
       <label class="flag-row">
         <input type="checkbox" id="flag-brain-dump" />
         <span>Brain dump (postpone for later)</span>
       </label>
       <label class="flag-row">
-        <input type="checkbox" id="flag-jira" />
-        <span>Jira ticket</span>
+        <input type="checkbox" id="flag-decision" />
+        <span>A decision (file under an initiative)</span>
       </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-person" />
+        <span>About a person</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-kudos" />
+        <span>Kudos (draft a shout-out)</span>
+      </label>
+    </div>
+    <div class="conditional-block" id="person-block">
+      <label for="person-name" class="field-label">Person name (optional - Kit will infer from content if blank)</label>
+      <input type="text" id="person-name" placeholder="e.g. Dave Shapiro" autocomplete="off" spellcheck="false" />
+    </div>
+  </div>
+
+  <div class="flags-section" id="section-context">
+    <span class="group-label">Context to gather <span class="group-hint">(Kit gathers before acting)</span></span>
+    <div class="flags-grid">
       <label class="flag-row">
         <input type="checkbox" id="flag-code-research" />
         <span>Code research / repo context</span>
       </label>
       <label class="flag-row">
-        <input type="checkbox" id="flag-pr-review" />
-        <span>PR review</span>
-      </label>
-      <label class="flag-row">
         <input type="checkbox" id="flag-search-around" />
         <span>Search around (vault + inbox)</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-web-research" />
+        <span>Web research / best practices</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="flags-section" id="section-actions">
+    <span class="group-label">Actions Kit takes</span>
+    <div class="flags-grid">
+      <label class="flag-row">
+        <input type="checkbox" id="flag-jira" />
+        <span>Create a Jira ticket</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-pr-review" />
+        <span>Review a PR</span>
       </label>
       <label class="flag-row">
         <input type="checkbox" id="flag-meeting" />
@@ -287,33 +388,34 @@
       </label>
       <label class="flag-row">
         <input type="checkbox" id="flag-reply" />
-        <span>This will need a reply</span>
-      </label>
-      <label class="flag-row">
-        <input type="checkbox" id="flag-decision" />
-        <span>Decision (file under an initiative)</span>
-      </label>
-      <label class="flag-row">
-        <input type="checkbox" id="flag-person" />
-        <span>Add / update a person</span>
-      </label>
-      <label class="flag-row">
-        <input type="checkbox" id="flag-auto-file" />
-        <span>Just file it (Kit's call)</span>
+        <span>Draft a reply</span>
       </label>
     </div>
-    <div class="epic-block" id="epic-block">
+    <div class="conditional-block" id="epic-block">
       <label for="epic-hint" class="field-label">Epic hint (Jira key)</label>
       <input type="text" id="epic-hint" placeholder="e.g. THRIV-13413" autocomplete="off" spellcheck="false" />
     </div>
-    <div class="epic-block" id="meeting-block">
+    <div class="conditional-block" id="meeting-block">
       <label for="meeting-attendees" class="field-label">Attendees (comma-separated emails)</label>
       <input type="text" id="meeting-attendees" placeholder="e.g. dave.shapiro@thriveworks.com, soham.trivedi@thriveworks.com" autocomplete="off" spellcheck="false" />
     </div>
-    <div class="epic-block" id="person-block">
-      <label for="person-name" class="field-label">Person name (optional - Kit will infer from content if blank)</label>
-      <input type="text" id="person-name" placeholder="e.g. Dave Shapiro" autocomplete="off" spellcheck="false" />
+  </div>
+
+  <div class="flags-section dispatch" id="section-dispatch">
+    <span class="group-label">How Kit handles this</span>
+    <div class="flags-grid single-col">
+      <label class="flag-row">
+        <input type="checkbox" id="flag-auto-file" />
+        <span>Auto-run (Kit acts autonomously; spawns a tangent tab when available)</span>
+      </label>
     </div>
+  </div>
+
+  <div class="attach-block">
+    <label for="attach-parent">Attach to</label>
+    <select id="attach-parent">
+      <option value="">— standalone capture —</option>
+    </select>
   </div>
 
   <div class="content-block">

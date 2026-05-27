@@ -35,11 +35,38 @@
     text-decoration: none;
   }
   a:hover { text-decoration: underline; }
+  button.action {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  button.action:hover { filter: brightness(1.05); }
+  button.action .hint {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.8;
+    text-transform: none;
+  }
 </style>
 </head>
 <body>
   <h1>BriefCase</h1>
   <div id="health" class="health">Checking sidecar...</div>
+  <button id="open-kudos" class="action" type="button">
+    Kudos
+    <span class="hint">Draft a shout-out to file in ThriveNotes</span>
+  </button>
   <a id="options-link" href="#">Open options</a>
   <script src="popup.js"></script>
 </body>

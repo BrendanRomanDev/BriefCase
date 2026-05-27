@@ -29,6 +29,7 @@ from briefcase.mcp_server.database import (
     get_db_connection,
     create_triage_item,
     get_pending_triage_count,
+    get_triage_items,
 )
 
 VOICE_PROFILE_PATH = Path.home() / ".claude" / "rules" / "brendan-voice-profile.md"
@@ -103,7 +104,9 @@ class ClipIn(BaseModel):
     metadata: Optional[dict] = Field(None,
                                      description="Free-form extra fields (sender, timestamp, thread preview, etc.)")
     flags: Optional[dict] = Field(None,
-                                  description="Capture-time signals about what work this needs (e.g. {'needs_jira': true, 'needs_code_review': false, 'search_around': true, 'epic_hint': 'THRIV-13413'}). Kit reads these during triage.")
+                                  description="Capture-time signals about what work this needs (e.g. {'needs_jira': true, 'needs_code_review': false, 'search_around': true, 'needs_web_research': true, 'epic_hint': 'THRIV-13413', 'auto_file': true}). Kit reads these during triage.")
+    attach_to_id: Optional[int] = Field(None,
+                                        description="Optional ID of an existing pending triage_queue item to attach this capture to. Children are surfaced as composite context under their parent at triage time and resolve together. The attachment is collapsed to one-deep if the target itself has a parent.")
 
 
 class ClipOut(BaseModel):
@@ -117,6 +120,20 @@ class HealthOut(BaseModel):
     pending_count: int
 
 
+class TriagePendingItem(BaseModel):
+    id: int
+    title: Optional[str]
+    content_preview: str
+    source: str
+    source_url: Optional[str]
+    captured_at: str
+
+
+class TangentAvailabilityOut(BaseModel):
+    available: bool
+    reason: Optional[str]
+
+
 class DraftIn(BaseModel):
     """A draft request from the extension."""
     content: str = Field(..., min_length=1, max_length=20_000,
@@ -127,6 +144,8 @@ class DraftIn(BaseModel):
                       description="Voice mode. 'informal' for Chat/Slack/email, 'formal' for RFCs/docs.")
     mode: str = Field("reply", pattern="^(reply|new|cleanup)$",
                       description="What we're doing: replying to the content, drafting a new message about the topic, or cleaning up Brendan's word-vomit.")
+    destination: str = Field("google-chat", pattern="^(markdown|google-chat|slack|plaintext)$",
+                             description="Where the drafted text will be pasted. Controls formatting rules: 'google-chat'/'slack'/'plaintext' emit NO markdown chars (no *bold*, no [text](url) links — bare URLs only). 'markdown' is full Github-flavored markdown. Defaults to 'google-chat' because that's the dominant extension use case and the most common formatting-noise pain point.")
 
 
 class DraftOut(BaseModel):
@@ -148,8 +167,40 @@ def _resolve_claude_cli() -> Optional[Path]:
     return None
 
 
+_DESTINATION_RULES = {
+    "markdown": (
+        "DESTINATION: markdown. Full Github-flavored markdown is fair game — "
+        "**bold**, _italic_, [text](url) links, bullet lists, headings, code fences."
+    ),
+    "google-chat": (
+        "DESTINATION: google-chat. Google Chat does NOT render markdown. "
+        "Output MUST follow these rules:\n"
+        "- NO *bold*, **bold**, _italic_, __italic__, ~strike~, ~~strike~~. Express emphasis "
+        "through word choice and structure (short sentences, paragraph breaks), not formatting chars.\n"
+        "- NO [text](url) markdown link syntax. Emit bare URLs only — Chat auto-linkifies them.\n"
+        "- NO markdown headings (#, ##). Use a 'Label:' line if structure is needed.\n"
+        "- NO code fences (```). For code/commands, drop a paragraph break and write the code on its own line.\n"
+        "- Bullets are OK as plain '-' or '•' at line start (Chat renders them as text, fine).\n"
+        "- Paragraph breaks (blank line between paragraphs) are preserved by Chat — use them.\n"
+        "If a markdown character ends up in the output, Brendan has to clean it up by hand. Do not make him."
+    ),
+    "slack": (
+        "DESTINATION: slack. Treat like google-chat: NO *bold*, NO _italic_, NO [text](url) syntax. "
+        "Emit bare URLs. Plain '-' bullets and paragraph breaks are fine. "
+        "(Slack has its own mrkdwn dialect, but Brendan's usage doesn't lean on it — keep formatting "
+        "characters out unless he asked for them.)"
+    ),
+    "plaintext": (
+        "DESTINATION: plaintext. NO formatting characters at all — no *bold*, no _italic_, "
+        "no [text](url), no bullets, no headings. Just paragraphs and bare URLs."
+    ),
+}
+
+
 def _build_draft_prompt(body: "DraftIn") -> str:
-    """Construct the prompt sent to `claude -p`. Inlines the voice profile."""
+    """Construct the prompt sent to `claude -p`. Inlines the voice profile
+    and applies destination-specific formatting rules so the output renders
+    cleanly where it will be pasted."""
     voice_profile = ""
     if VOICE_PROFILE_PATH.exists():
         voice_profile = VOICE_PROFILE_PATH.read_text()
@@ -175,6 +226,8 @@ def _build_draft_prompt(body: "DraftIn") -> str:
         parts.append("---")
     parts.append(f"Tone: {body.tone}")
     parts.append("")
+    parts.append(_DESTINATION_RULES.get(body.destination, _DESTINATION_RULES["markdown"]))
+    parts.append("")
     parts.append(task)
     parts.append("")
     parts.append(f"## {target_label}")
@@ -187,8 +240,10 @@ def _build_draft_prompt(body: "DraftIn") -> str:
     parts.append(
         "Output ONLY the draft body — no preamble, no 'Here's the draft:', "
         "no markdown wrappers (no leading ```), no signature, no closing remarks. "
-        "Just the exact text Brendan would paste into Chat/Slack/email/etc. "
-        "Preserve paragraph breaks where they help readability."
+        "Just the exact text Brendan would paste at the destination. "
+        "Preserve paragraph breaks where they help readability. "
+        "Re-read the DESTINATION rules above one more time before finalizing — "
+        "no markdown characters slip through when the destination forbids them."
     )
     return "\n".join(parts)
 
@@ -320,6 +375,7 @@ def create_app() -> FastAPI:
                 title=body.title,
                 metadata=body.metadata,
                 flags=body.flags,
+                parent_id=body.attach_to_id,
             )
         finally:
             conn.close()
@@ -327,13 +383,74 @@ def create_app() -> FastAPI:
             ",".join(k for k, v in body.flags.items() if v)
             if isinstance(body.flags, dict) else ""
         )
+        attach_note = f" attached_to=#{body.attach_to_id}" if body.attach_to_id else ""
         logger.info(
-            "Enqueued triage item #%s from source=%s flags=[%s]",
-            item_id, body.source, flag_summary
+            "Enqueued triage item #%s from source=%s flags=[%s]%s",
+            item_id, body.source, flag_summary, attach_note
         )
         return ClipOut(status="success", triage_item_id=item_id)
 
+    @app.get("/triage-pending", response_model=list[TriagePendingItem])
+    def triage_pending(
+        limit: int = 10,
+        x_briefcase_token: Optional[str] = Header(default=None, alias="X-BriefCase-Token"),
+    ) -> list[TriagePendingItem]:
+        """Recent pending triage items, newest first. Used by the compose
+        form to populate the 'attach to existing capture' dropdown.
+
+        Only top-level items (no parent) are returned — children can't be
+        attached to (the form collapses to one-deep anyway).
+        """
+        _require_auth(x_briefcase_token)
+        limit = max(1, min(limit, 50))
+        conn = get_db_connection()
+        try:
+            items = get_triage_items(conn, status='pending', limit=limit)
+        finally:
+            conn.close()
+        items.sort(key=lambda r: r.get('captured_at') or '', reverse=True)
+        out: list[TriagePendingItem] = []
+        for item in items:
+            content = item.get('content') or ''
+            preview = content.strip().replace('\n', ' ')
+            if len(preview) > 80:
+                preview = preview[:77] + '...'
+            out.append(TriagePendingItem(
+                id=item['id'],
+                title=item.get('title'),
+                content_preview=preview,
+                source=item['source'],
+                source_url=item.get('source_url'),
+                captured_at=item.get('captured_at') or '',
+            ))
+        return out
+
+    @app.get("/tangent-available", response_model=TangentAvailabilityOut)
+    def tangent_available() -> TangentAvailabilityOut:
+        """Whether Kit can dispatch auto-run items to a tangent skill.
+
+        Detection: `wezterm` must be on PATH AND at least one tangent
+        SKILL.md must exist under ~/.dotfiles or ~/.claude. Unauthenticated
+        because it's a host-level capability check, not user data."""
+        avail, reason = detect_tangent_available()
+        return TangentAvailabilityOut(available=avail, reason=reason)
+
     return app
+
+
+def detect_tangent_available() -> tuple[bool, Optional[str]]:
+    """Return (available, reason). reason is None on success, a short
+    explanation on failure. Used by the sidecar endpoint and the MCP
+    server at startup."""
+    if shutil.which("wezterm") is None:
+        return False, "wezterm not found on PATH"
+    candidate_skills = [
+        Path.home() / ".dotfiles" / "claude" / "skills" / "tangent" / "SKILL.md",
+        Path.home() / ".claude" / "skills" / "tangent" / "SKILL.md",
+    ]
+    if not any(p.exists() for p in candidate_skills):
+        return False, "tangent SKILL.md not found in ~/.dotfiles or ~/.claude"
+    return True, None
 
 
 app = create_app()

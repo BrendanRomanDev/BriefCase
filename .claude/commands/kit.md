@@ -83,18 +83,24 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 - Also: at the end of daily planning or a status recap, if the queue isn't empty and he hasn't processed it, offer once — don't nag.
 
 **The walk:**
-1. Call `get_triage_queue()` to get all pending items.
-2. **Auto-file sweep (first thing, before presenting anything to Brendan).** Partition items by `flags.auto_file`:
-   - For each `auto_file: true` item: claim it (`claim_triage_item`), infer destination from content + context (any of the normal routes — `brain_dump`, `thrivenote`, `daily_note`, `initiative`, `discard`, `mark_resolved`), file it via the normal destination-specific path, then run any post-resolution side-effects implied by other flags on the same item (e.g. `auto_file + needs_jira` → file the inbox item AND draft+create the ticket AND `add_external_ref` it onto the resulting entity, all without prompting).
+1. Call `get_triage_queue()` to get all pending items. Each item may include a `children: [...]` array of attached captures — treat the parent + its children as ONE composite item: union their flags (any-true wins), concatenate their source URLs, and pass the parent's `item_id` to `triage_item`. The MCP resolves children automatically when the parent resolves.
+2. Call `get_runtime_capabilities()` ONCE to learn whether tangent dispatch is available. Cache the result for the rest of the walk. This drives auto-run behavior below.
+3. **Auto-run sweep (first thing, before presenting anything to Brendan).** Partition items by `flags.auto_file` (UI label: "Auto-run"):
+   - **If `tangent.available` is true**: for each auto-run item, claim it (`claim_triage_item`), then invoke the appropriate tangent skill via the `Skill` tool. Pick the skill from `runtime.tangent`:
+     - If the item has ONLY research flags (`needs_code_research`, `search_around`, `needs_web_research`) and no action flags → use `skill_research` (tangent-teach).
+     - Otherwise → use `skill_work` (plain tangent).
+     Build the handoff content as the skill's argument: include the captured content, source URL(s) from parent + any children, the unioned flag set, and any `user_context` from metadata. Then call `triage_item(item_id, action='mark_resolved', resolution_note="spawned tangent skill=<name>")` to close the queue item. **Do NOT also perform inline destination filing** — the tangent owns the work now.
+   - **If `tangent.available` is false** (no WezTerm or detection failed): fall back to inline auto-file behavior. For each auto-run item: claim it, infer destination from content + context (any of the normal routes — `brain_dump`, `thrivenote`, `daily_note`, `initiative`, `discard`, `mark_resolved`), file it via the normal destination-specific path, then run any post-resolution side-effects implied by other flags on the same item (e.g. `auto_file + needs_jira` → file the inbox item AND draft+create the ticket AND `add_external_ref` it onto the resulting entity, all without prompting).
    - Anchor: *Brendan wouldn't have clicked auto if it mattered too much.* Lean toward "pick something reasonable and move on." Only ask if genuinely stuck (e.g. content references a person whose file Brendan would clearly want to confirm placement on, or an ambiguous initiative slug with no nearby hint). Asking should be the rare exception.
    - If you really can't classify an item with confidence, leave it pending (release the claim) and surface it in the human-review section of the walk instead. Don't ask mid-sweep.
-   - Report **per item** what was done and where: title/preview, destination, path or ID. Render before moving to the interactive walk. If the auto-batch is large (>5 items), group by destination in the summary.
-3. For each remaining (non-auto) item, present it clearly with:
+   - Report **per item** what was done and where: title/preview, destination (or tangent skill + handoff topic), path or ID. Render before moving to the interactive walk. If the auto-batch is large (>5 items), group by destination/tangent in the summary.
+4. For each remaining (non-auto) item, present it clearly with:
    - Source (e.g. `google_chat`, `web_clip`) and an "open in source" link using `source_url`
    - Title (if present) + a preview of `content` (first ~200 chars, full on request)
    - Any `metadata` fields that matter (sender, channel, timestamp, thread preview)
-4. Ask Brendan what to do. Valid actions: `brain_dump`, `initiative`, `thrivenote`, `daily_note`, `discard`. Offer suggestions based on content (e.g. "This looks like a review request from Orion — brain dump with urgency=2?") but let him decide.
-5. Route the decision via `triage_item(item_id, action=..., ...)`. Source URL + metadata carry forward automatically onto `brain_dump` inbox items and new `initiative` rows — do not re-paste them.
+   - **If `children` is non-empty**: render the composite — parent first, then each attached child indented underneath with its own source/source_url/content preview. Make it visually clear they triage as ONE thing.
+5. Ask Brendan what to do. Valid actions: `brain_dump`, `initiative`, `thrivenote`, `daily_note`, `discard`. Offer suggestions based on content (e.g. "This looks like a review request from Orion — brain dump with urgency=2?") but let him decide.
+6. Route the decision via `triage_item(item_id, action=..., ...)`. Source URL + metadata carry forward automatically onto `brain_dump` inbox items and new `initiative` rows — do not re-paste them. When the parent has attached children, the MCP auto-unions flag-derived tags and carries every source URL into `source_metadata.source_urls`.
 
 **Destination-specific handling:**
 
@@ -105,6 +111,8 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 - **`thrivenote`**: YOU file the note to the vault first — do NOT assume `triage_item` handles the write. Confirm placement with Brendan per the global ThriveNotes rule (~/.claude/rules/thrive-notes.md). **Always embed the source link in the markdown body**, e.g. at the top: `Source: [Google Chat message](https://chat.google.com/...)`. THEN call `triage_item(item_id, action='thrivenote', resolution_note="<filed path>")` to mark the queue item resolved.
 
 - **`daily_note`**: YOU call `plan_daily(date, notes=...)` first to add it to a day's notes. Include the source_url in the note body. THEN call `triage_item(item_id, action='daily_note', resolution_note="<day>")`.
+
+- **`kudos`**: YOU draft the shout-out first, then file it, THEN call `triage_item(item_id, action='kudos', resolution_note="<recipient> → <file path>")` to close the queue item. Full flow under the `kudos: true` flag below.
 
 - **`discard`**: just call `triage_item(item_id, action='discard')`. Use when the item is stale, already handled, or not actionable.
 
@@ -117,7 +125,7 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 
 **Capture-time flags** — each queue item may include a `flags` dict set in the Chrome extension compose popup. Always surface these when presenting an item, and act on them during the triage conversation:
 
-- `auto_file: true` → Brendan has pre-decided that **you** should handle this without asking. Sweep these at the top of the walk (see step 2 of "The walk" above). Do NOT prompt during the sweep unless genuinely stuck. Report per-item what you did and where. Other flags on the same item still fire as post-resolution side-effects (e.g. `auto_file + needs_jira` → file + draft+create the ticket + `add_external_ref`, all without prompting).
+- `auto_file: true` → Brendan has pre-decided that **you** should handle this without asking. Sweep these at the top of the walk (see step 2 of "The walk" above). Do NOT prompt during the sweep unless genuinely stuck. Report per-item what you did and where. Other flags on the same item still fire as post-resolution side-effects (e.g. `auto_file + needs_jira` → file + draft+create the ticket + `add_external_ref`, all without prompting). **Exception: `auto_file + kudos` always pauses for approval before filing** — tone matters too much to file a shout-out silently. The sweep drafts the kudos and stages it; you surface the draft in the next Kit interaction with an "approve to file" step.
 
 - `is_brain_dump: true` → Brendan has pre-decided the destination. **Skip** the "what should I do with this?" question and route straight to brain_dump. Still confirm the brain_dump fields (title, description, complexity, urgency, initiative_slug, target_week) before calling `triage_item` — the destination is decided but the metadata isn't. Other flags still apply as post-resolution side-effects.
 
@@ -126,6 +134,8 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 - `needs_jira: true` → After (or instead of) the standard destinations, propose drafting a Jira ticket. If `epic_hint` is also set, propose that as the parent epic — verify it exists via `mcp__atlassian__getJiraIssue` first. Draft the ticket body, present for approval, then create via `mcp__atlassian__createJiraIssue`. After creation, immediately call `add_external_ref` to record the new ticket on whichever inbox/initiative resulted from triage. If the atlassian MCP isn't loaded in this session (e.g. running in a context without it), say so and produce a paste-ready ticket body for Brendan to handle manually.
 
 - `needs_code_research: true` (or legacy `needs_code_review` — same semantic) → exploratory codebase investigation. After triage resolves into an inbox item or initiative, tag the resulting entity with `needs_code_context`. For brain_dump: pass `tags=['needs_code_context']` (extends `triage_item`'s call to `brain_dump`). For initiative: `manage_initiative(action='update', slug=<slug>, tags=['needs_code_context'], tags_mode='append')`. This is what a future Thriveworks-repo session will query for via `get_capture_list(tags=['needs_code_context'])`. **Distinct from `needs_pr_review` below — code research is exploratory, PR review is a specific Github review.**
+
+- `needs_web_research: true` → research that lives OUTSIDE the codebase — industry best practices, vendor docs, comparative analysis, "how does X handle Y." After triage resolves, the resulting brain_dump/initiative is auto-tagged `web-research`. When paired with `auto_file` and tangent is available, Kit dispatches to `tangent-teach` so the research happens in its own tab with the teaching/explanation framing. Without `auto_file`, this becomes a regular brain_dump tagged for follow-up.
 
 - `needs_pr_review: true` → a specific Github PR needs review. Content should contain the PR URL. After triage resolves into an inbox item, tag the resulting entity with `needs_pr_review`. From the Thriveworks repo, walking these items typically maps to invoking `/review-as-brendan` (or `/review-im` for IM-specific PRs) for the actual review work — surface that hint to Brendan during triage. The auto-derive in `triage_item` handles both `needs_code_context` and `needs_pr_review` tag propagation when the corresponding flags are set.
 
@@ -158,6 +168,29 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
      - `mark_resolved` — the decision is filed, no inbox item needed (most common — decisions are reference material, not action items)
      - `brain_dump` alongside — when the decision also implies follow-up work that warrants an inbox item
 
+- `kudos: true` → Brendan wants a shout-out drafted. The captured content describes a kudos-worthy thing someone did. The recipient may be in `flags.kudos_recipient` (set by the Chrome extension popup) or referenced in the content/context. Process:
+  1. **Determine the recipient.** Prefer `flags.kudos_recipient` if set. Otherwise extract from content/context, or ASK.
+  2. **Read** `~/.claude/rules/brendan-voice-profile.md` so the draft is in Brendan's voice.
+  3. **Draft the kudos** as a Google Chat post. **Destination is `google-chat`** — that means NO `*bold*`, NO `_italic_`, NO `[text](url)` markdown links. Bare URLs only. Express emphasis through word choice and structure, not formatting chars. (The `/draft` skill's "Destination Formatting" section spells this out — apply it inline rather than invoking the slash command.) Keep it warm but concise — a Chat-channel shout-out, not a paragraph essay.
+  4. **Present for approval.** Show the draft, ask "send it as-is, tweak, or scrap?". If Brendan tweaks, redraft. If he scraps, route the queue item to `discard` instead.
+  5. **On approval, append to** `~/Notes/ThriveNotes/kudos/YYYY-kudos.md` (where YYYY is the current year). Create the `kudos/` folder + the year file if either is missing. Format the entry as:
+     ```
+     ## YYYY-MM-DD — <Recipient>
+
+     <the drafted kudos body, exactly as approved>
+
+     _Context:_ <1-line summary of what triggered it, pulled from the captured content/context>
+     ```
+     If the file already exists, append a blank line then the new entry. Read first, then append — never overwrite.
+  6. **pbcopy the approved draft** so Brendan can paste straight into the kudos channel:
+     ```bash
+     tee "$HOME/.briefcase/last_draft.txt" << 'BRIEFCASE_DRAFT_EOF' | pbcopy
+     <the exact approved kudos body>
+     BRIEFCASE_DRAFT_EOF
+     ```
+  7. **Resolve the queue item** via `triage_item(item_id, action='kudos', resolution_note="<recipient> → ~/Notes/ThriveNotes/kudos/<year>-kudos.md")`.
+  8. **Auto-sweep carveout:** even when `auto_file: true` is set, kudos items do NOT silently file. Auto-sweep drafts the kudos and stages it (presents the draft + appends nothing yet), then **pauses for Brendan's approval** before writing to ThriveNotes + pbcopying. Surface staged kudos drafts in the next Kit interaction with an explicit "approve to file" step. Tone matters too much to file silently.
+
 - `is_person: true` → the captured content is information about a person Brendan interacts with. People live in the vault at `~/Notes/ThriveNotes/people/` (one markdown file per person — established 2026-04-24). Process:
   1. **Determine the person.** Prefer `flags.person_name` if set in the popup. Otherwise extract from content/context. If still unclear, ASK.
   2. **Check if the file already exists** at `~/Notes/ThriveNotes/people/<slug>.md`. Slug convention follows whatever the existing folder uses (typically lowercase-firstname-lastname). `ls ~/Notes/ThriveNotes/people/` to check existing convention if unsure.
@@ -182,7 +215,7 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
      Confirm placement + filename with Brendan, then write.
   5. **Resolve the queue item** as `mark_resolved` (the file is the action). Or alongside `brain_dump` if there's a follow-up action embedded ("ping them about X next week").
 
-Multiple flags may be set. Handle in this order: **auto_file** (if set, the whole item is handled in the sweep step — same destination + side-effect logic below, just without prompting) → **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else user choice) → **needs_jira / needs_code_research / needs_pr_review / needs_meeting / needs_reply / is_decision / is_person** as post-resolution side-effects.
+Multiple flags may be set. Handle in this order: **auto_file** (if set, the whole item is handled in the sweep step — tangent-dispatched when available, otherwise inline destination + side-effect logic below, just without prompting; **`kudos` is the carve-out** — auto-sweep drafts but pauses for approval before filing) → **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else `kudos` if set, else user choice) → **needs_jira / needs_code_research / needs_web_research / needs_pr_review / needs_meeting / needs_reply / is_decision / is_person** as post-resolution side-effects.
 
 ### Queue Concurrency (multi-agent coordination)
 

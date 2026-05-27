@@ -19,7 +19,9 @@ async def get_triage_queue(
     """
     try:
         conn = get_db_connection()
-        items = get_triage_items(conn, status=status, limit=limit)
+        items = get_triage_items(
+            conn, status=status, limit=limit, attach_children=True
+        )
         conn.close()
 
         return {
@@ -40,7 +42,9 @@ TOOL_DESCRIPTION = (
     "captured content, and optional metadata (sender, channel, thread preview). "
     "Use at conversation start or when the user asks 'what's in the queue?' "
     "Walk through items 1x1 with the user to decide: brain dump, initiative, "
-    "thrivenote, daily note, or discard — then call triage_item to resolve."
+    "thrivenote, daily note, or discard - then call triage_item to resolve. "
+    "Attached captures appear nested in `children: [...]` under their parent; "
+    "triage the composite together (resolving the parent resolves all children)."
 )
 TOOL_SCHEMA = {
     "type": "object",

@@ -13,14 +13,17 @@ BriefCase is an MCP server powering **Kit**, a work-focused planning assistant f
 
 ## Critical Rules
 
-### Dual Instruction Sync
+### Triple Instruction Sync
 
-Kit receives instructions from TWO places that MUST stay in sync:
+Kit's triage-walk and flag-handling behavior is described in THREE places that MUST stay in sync:
 
-1. `.claude/commands/kit.md` — full agent instructions
-2. `briefcase/mcp_server/server.py` — `SERVER_INSTRUCTIONS` sent to all MCP clients
+1. `.claude/commands/kit.md` — full `/kit` agent instructions (this repo)
+2. `~/.dotfiles/claude/commands-work/kit-lite.md` — `/kit-lite` instructions (dotfiles repo)
+3. `briefcase/mcp_server/server.py` — `SERVER_INSTRUCTIONS` sent to all MCP clients
 
-When changing behavior, update BOTH files.
+When changing Kit behavior (especially triage-walk steps, flag semantics, or anything in the auto-run / tangent dispatch path), update ALL THREE. The kit-lite file lives in a separate repo but covers the same flow with a leaner activation footprint; skipping it leaves `/kit-lite` running stale logic.
+
+`kit.md` is sourced canonically here in the BriefCase repo. Dotfiles' `command-bindings.conf` wires `~/.claude/commands/kit.md` → this file so `/kit` works from any cwd.
 
 ### Tools-First
 
