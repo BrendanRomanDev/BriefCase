@@ -17,7 +17,7 @@ async def consume_decisions(
     decision_ids: Optional[list] = None,
 ) -> dict:
     """Flip decisions from 'pending' to 'consumed' after they've been filed
-    into a downstream artifact (e.g. a Thriveworks-repo decisions.md file).
+    into a downstream artifact (e.g. a code-repo decisions.md file).
 
     Filter modes (at least one required to prevent mass-mutation):
       - decision_ids: mark exactly those rows
@@ -58,7 +58,7 @@ async def consume_decisions(
 TOOL_NAME = "consume_decisions"
 TOOL_DESCRIPTION = (
     "Mark decisions as 'consumed' after they've been filed into a downstream "
-    "artifact (e.g. a Thriveworks-repo decisions.md). Decisions are NOT "
+    "artifact (e.g. a code-repo decisions.md). Decisions are NOT "
     "deleted - keep history with consumed_at timestamp. Pass either "
     "`decision_ids` (specific rows) or `initiative_slug`/`initiative_id` "
     "(all pending for that initiative)."

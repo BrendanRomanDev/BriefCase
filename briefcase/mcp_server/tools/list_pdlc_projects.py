@@ -3,6 +3,7 @@
 import logging
 from typing import Optional
 
+from briefcase.mcp_server.config import load_user_profile
 from briefcase.mcp_server.database import get_db_connection, get_all_initiatives
 from briefcase.mcp_server.pdlc import (
     iter_projects, load_initiatives, briefcase_links_for,
@@ -11,8 +12,18 @@ from briefcase.mcp_server.pdlc import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LANE_TEAM = "client-experience"
-DEFAULT_LANE_TECH_LEAD = "Brendan Roman"
+
+def _default_lane() -> tuple[Optional[str], Optional[str]]:
+    """Default (team, tech_lead) filter for `my_lane=True`. Reads from the
+    user profile so the lane follows the operator. If the profile doesn't
+    declare PDLC lane fields, returns (None, None) — `my_lane=True` then
+    becomes a no-op filter (all projects pass)."""
+    try:
+        profile = load_user_profile() or {}
+    except Exception:
+        return (None, None)
+    pdlc_cfg = profile.get("pdlc") or {}
+    return (pdlc_cfg.get("team"), pdlc_cfg.get("tech_lead"))
 
 
 def _project_matches_lane(project: dict, my_lane: bool,
@@ -26,12 +37,15 @@ def _project_matches_lane(project: dict, my_lane: bool,
         return False
 
     if my_lane and not (team or tech_lead):
-        in_lane = (
-            project.get("team") == DEFAULT_LANE_TEAM
-            or project.get("tech_lead") == DEFAULT_LANE_TECH_LEAD
-        )
-        if not in_lane:
-            return False
+        default_team, default_lead = _default_lane()
+        # If the user profile doesn't declare a lane, my_lane is a no-op.
+        if default_team or default_lead:
+            in_lane = (
+                (default_team is not None and project.get("team") == default_team)
+                or (default_lead is not None and project.get("tech_lead") == default_lead)
+            )
+            if not in_lane:
+                return False
 
     return True
 
@@ -116,17 +130,18 @@ async def list_pdlc_projects(
 
 TOOL_NAME = "list_pdlc_projects"
 TOOL_DESCRIPTION = (
-    "List PDLC projects with Kit linkage status. Defaults to Brendan's lane "
-    "(team=client-experience OR tech_lead=Brendan Roman). Each project includes "
-    "briefcase_links — Kit initiatives tagged `pdlc-project:<id>`. Empty briefcase_links "
-    "means the project hasn't been linked to Kit yet."
+    "List PDLC projects with Kit linkage status. With `my_lane=True` (default), "
+    "filters to the lane declared in `~/.briefcase/user_profile.yaml` under `pdlc.team` "
+    "and `pdlc.tech_lead`. If the profile doesn't declare a lane, my_lane is a no-op. "
+    "Each project includes briefcase_links — Kit initiatives tagged `pdlc-project:<id>`. "
+    "Empty briefcase_links means the project hasn't been linked to Kit yet."
 )
 TOOL_SCHEMA = {
     "type": "object",
     "properties": {
         "my_lane": {
             "type": "boolean", "default": True,
-            "description": "Filter to Brendan's lane (client-experience team OR Brendan as tech lead). Ignored if `team` or `tech_lead` is given explicitly."
+            "description": "Filter to your lane (matches `pdlc.team` / `pdlc.tech_lead` in user_profile.yaml). Ignored if `team` or `tech_lead` is given explicitly, or if no lane is declared."
         },
         "team": {"type": "string", "description": "Filter by team slug (e.g., client-experience, finding-care)"},
         "tech_lead": {"type": "string", "description": "Filter by tech_lead name"},

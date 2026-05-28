@@ -47,7 +47,7 @@ TOOL_DESCRIPTION = (
     "Query inbox items. Filter by initiative, status, target_week, and/or "
     "tags. Excludes completed items by default. Items returned with tags "
     "decoded as a list. Use tags=['needs_code_context'] to find items "
-    "flagged for Thriveworks-repo follow-up work."
+    "flagged for code-repo follow-up work."
 )
 TOOL_SCHEMA = {
     "type": "object",

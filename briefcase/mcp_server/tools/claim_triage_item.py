@@ -18,9 +18,9 @@ async def claim_triage_item(item_id: int, claimed_by: str) -> dict:
     if another agent claimed first, this returns ok=False (failed_reason=
     'already_claimed') and we don't overwrite their claim.
 
-    `claimed_by` is a short label so other agents (or future-Brendan)
-    can see who's working on it. Suggested format: '<repo|cwd-context>
-    <agent-name>' e.g. 'tw-repo kit-lite' or 'briefcase kit'. Keep it
+    `claimed_by` is a short label so other agents (or you in a future
+    session) can see who's working on it. Suggested format: '<repo|cwd-context>
+    <agent-name>' e.g. 'myrepo kit-lite' or 'briefcase kit'. Keep it
     lean - this is a signal, not a long log message.
     """
     try:

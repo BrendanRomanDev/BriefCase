@@ -131,7 +131,7 @@ async def draft_status_update(
                 "Draft a professional stakeholder update from this data. "
                 "Lead with outcomes, not tasks. Connect technical work to business value. "
                 "Keep it under 300 words. Sections: Progress, Current Status, "
-                "Blockers/Risks, Upcoming. No emojis. Present the draft for Brendan "
+                "Blockers/Risks, Upcoming. No emojis. Present the draft for the user "
                 "to review before sending."
             )
         }

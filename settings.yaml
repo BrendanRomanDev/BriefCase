@@ -1,15 +1,20 @@
 database_path: ~/.briefcase/briefcase.db
-obsidian_vault: ~/Notes/ThriveNotes
+# obsidian_vault: set during /onboard (e.g. ~/Notes/MyVault). Tools that
+# need the vault will prompt you to run /onboard if it's missing.
+obsidian_vault: null
 user_profile: ~/.briefcase/user_profile.yaml
 backup_dir: ~/.briefcase/backups
 
 features:
-  printing: true
+  # printing: enable only if you have a network thermal printer configured below
+  printing: false
   repo_integration: true
 
+# Network thermal printer (optional). /onboard will ask for these if you
+# enable features.printing. Leave host null to disable.
 printer:
   type: "network"
-  host: "192.168.68.99"
+  host: null
   port: 9100
   width_mm: 72
   width_px: 576
@@ -32,7 +37,8 @@ tangent:
   attach_dropdown_limit: 10
 
 # External systems. Used by external_refs to derive canonical URLs from
-# short keys (e.g. 'THRIV-13413' -> 'https://.../browse/THRIV-13413').
+# short keys (e.g. 'ABC-1234' -> 'https://your-org.atlassian.net/browse/ABC-1234').
+# /onboard will ask for your Jira workspace URL if you enable the integration.
 integrations:
   jira:
-    base_url: https://thriveworks.atlassian.net
+    base_url: null

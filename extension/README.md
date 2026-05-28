@@ -37,7 +37,7 @@ the extension options below.
 1. Open Chrome and navigate to `chrome://extensions`.
 2. Toggle **Developer mode** on (top-right corner).
 3. Click **Load unpacked**.
-4. Select this directory: `/Users/brendan.roman/Programming/BriefCase/extension/`.
+4. Select the `extension/` directory inside your BriefCase clone (the directory containing `manifest.json`).
 5. The BriefCase icon should appear in the toolbar (pin it via the puzzle-piece menu
    if you want quick access).
 

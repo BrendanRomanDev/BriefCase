@@ -14,8 +14,8 @@ async def get_triage_queue(
     """List items in the triage queue.
 
     The queue holds raw captures from the Chrome extension (web clips,
-    Google Chat messages, etc.) until Kit walks through them 1x1 and
-    promotes them into inbox items, initiatives, ThriveNotes, or discards.
+    chat messages, etc.) until Kit walks through them 1x1 and promotes
+    them into inbox items, initiatives, vault notes, or discards.
     """
     try:
         conn = get_db_connection()

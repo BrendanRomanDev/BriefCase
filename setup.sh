@@ -38,11 +38,37 @@ add()  { echo "  [install] $*"; }
 skip() { echo "  [skip] $*"; }
 warn() { echo "  [warn] $*"; }
 
-require_macos() {
-    if [[ "$(uname -s)" != "Darwin" ]]; then
-        warn "Tested on macOS only. Linux may work for the MCP + DB pieces"
-        warn "but the launchd sidecar will not load. Proceeding anyway."
-    fi
+detect_platform() {
+    # Sets PLATFORM to one of: darwin | linux | wsl | windows
+    # Used to skip platform-specific phases (launchd) and surface guidance
+    # for the /onboard agent. Never bails — the /onboard agent handles
+    # platform-specific pivots (systemd on Linux, Scheduled Task on Windows).
+    local uname_s
+    uname_s="$(uname -s 2>/dev/null || echo unknown)"
+    case "${uname_s}" in
+        Darwin) PLATFORM="darwin" ;;
+        Linux)
+            if grep -qi microsoft /proc/version 2>/dev/null; then
+                PLATFORM="wsl"
+            else
+                PLATFORM="linux"
+            fi
+            ;;
+        MINGW*|MSYS*|CYGWIN*) PLATFORM="windows" ;;
+        *) PLATFORM="unknown" ;;
+    esac
+
+    case "${PLATFORM}" in
+        darwin) ok "platform: macOS (full install supported)" ;;
+        linux)  warn "platform: Linux — launchd phase will skip; use systemd via /onboard" ;;
+        wsl)    warn "platform: WSL2 — treated as Linux; clipboard via clip.exe" ;;
+        windows)
+            echo "ERROR: setup.sh is a bash installer. On Windows-native, run /onboard" >&2
+            echo "       inside Claude Code instead — it handles winget + Scheduled Task." >&2
+            exit 1
+            ;;
+        *)      warn "platform: unknown ($uname_s) — proceeding, but you may hit issues" ;;
+    esac
 }
 
 require_cmd() {
@@ -56,9 +82,15 @@ require_cmd() {
 
 # --- Phase 0: Preflight ---
 hdr "0 / Preflight"
-require_macos
-require_cmd python3 "Install via Homebrew: brew install python@3.12"
-require_cmd claude   "Install Claude Code: brew install --cask claude-code"
+detect_platform
+# Per-platform install hints (the /onboard agent uses these to pivot):
+#   macOS:   brew install python@3.12  /  brew install --cask claude-code
+#   Linux:   apt/dnf/pacman install python3.12  /  npm i -g @anthropic-ai/claude-code
+#   WSL2:    same as Linux; clipboard via clip.exe; sidecar via systemd --user
+#   Windows: winget install Python.Python.3.12  /  winget install Anthropic.ClaudeCode
+#            sidecar via Task Scheduler or NSSM (handled by /onboard)
+require_cmd python3 "Install Python 3.11+ for your platform (macOS: brew install python@3.12)"
+require_cmd claude   "Install Claude Code (macOS: brew install --cask claude-code)"
 ok "python3: $(python3 --version)"
 ok "claude:  $(claude --version 2>/dev/null || echo 'available')"
 
@@ -136,12 +168,21 @@ projects:
 
 calendar_id: primary
 
-obsidian_vault: ~/Notes/ThriveNotes
+# Absolute path to your Obsidian vault. Leave null to skip vault-dependent
+# features (kudos, weekly rollup, meeting note filing). The /onboard agent
+# will prompt you for this if you haven't set it.
+obsidian_vault: null
+
+# Optional PDLC lane filter. Drop a `team` or `tech_lead` string to scope
+# `list_pdlc_projects(my_lane=true)` to your slice. Leave empty for "all".
+pdlc:
+  team: ""
+  tech_lead: ""
 
 preferences:
   printing: false
 YAML
-    warn "edit ${PROFILE_PATH} with your real role, team, and projects"
+    warn "edit ${PROFILE_PATH} or run /onboard to populate your details"
 fi
 
 # --- Phase 3: Register MCP server with Claude Code (user scope) ---
@@ -165,10 +206,14 @@ else
     ok "registered. Restart any running Claude Code session to pick it up."
 fi
 
-# --- Phase 4: Sidecar (launchd agent) ---
-hdr "4 / Sidecar HTTP bridge (launchd agent)"
+# --- Phase 4: Sidecar (launchd agent — macOS only) ---
+hdr "4 / Sidecar HTTP bridge"
 
-if [[ ! -x "${SIDECAR_INSTALL}" ]]; then
+if [[ "${PLATFORM}" != "darwin" ]]; then
+    warn "Skipping launchd sidecar install on ${PLATFORM}."
+    warn "Run /onboard inside Claude Code to install a systemd user service (Linux/WSL)"
+    warn "or a Scheduled Task (Windows-native). The sidecar code itself is platform-neutral."
+elif [[ ! -x "${SIDECAR_INSTALL}" ]]; then
     warn "${SIDECAR_INSTALL} not found or not executable — skipping sidecar"
 else
     add "running ${SIDECAR_INSTALL}"

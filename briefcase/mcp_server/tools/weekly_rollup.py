@@ -90,7 +90,7 @@ def _collect_meeting_notes(vault: Path, week_start: date, week_end: date) -> lis
 
 def _format_rollup_md(iso_week: str, week_start: date, week_end: date,
                      data: dict) -> str:
-    """Render the rollup as markdown. Concise — Brendan can flesh it out later."""
+    """Render the rollup as markdown. Concise — the user can flesh it out later."""
     lines = [
         f"# Weekly Rollup — {iso_week}",
         f"_{week_start.isoformat()} → {week_end.isoformat()}_",
@@ -166,7 +166,7 @@ async def weekly_rollup(
     lookahead_weeks: int = 2,
     overwrite: bool = False,
 ) -> dict:
-    """Generate a weekly rollup and write it to ThriveNotes/weeklies/."""
+    """Generate a weekly rollup and write it to <vault>/weeklies/."""
     try:
         if target_week is None:
             target_week = _current_iso_week()
@@ -312,7 +312,7 @@ TOOL_NAME = "weekly_rollup"
 TOOL_DESCRIPTION = (
     "Generate a weekly executive summary covering meetings (Obsidian), completed/open "
     "work (DB), conversation notes, and a look-ahead (target_week items + approaching "
-    "deadlines). Writes to ThriveNotes/weeklies/<iso-week>-rollup.md. Defaults to the "
+    "deadlines). Writes to <vault>/weeklies/<iso-week>-rollup.md. Defaults to the "
     "current ISO week."
 )
 TOOL_SCHEMA = {

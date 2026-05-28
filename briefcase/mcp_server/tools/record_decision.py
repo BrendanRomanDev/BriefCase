@@ -27,7 +27,7 @@ async def record_decision(
     today (UTC) if not provided.
 
     Decisions live in the decision_log table with status='pending'. A
-    Thriveworks-repo dev session can later call `get_decision_log` to bulk-pull
+    code-repo dev session can later call `get_decision_log` to bulk-pull
     them and update its in-repo decisions.md, then `consume_decisions` to
     mark them as filed.
     """
@@ -80,7 +80,7 @@ TOOL_NAME = "record_decision"
 TOOL_DESCRIPTION = (
     "Record a decision under a specific initiative. The decision lives in "
     "the decision_log table with status='pending' until a downstream session "
-    "(e.g. a Thriveworks-repo dev session updating decisions.md) consumes it. "
+    "(e.g. a code-repo dev session updating decisions.md) consumes it. "
     "Kit calls this during triage when a queue item has flags.is_decision=true. "
     "Pass `decision` (the one-liner), `initiative_slug` (or _id), and "
     "optionally `rationale`, `decided_at` (YYYY-MM-DD), `source_url`, "

@@ -32,7 +32,12 @@ from briefcase.mcp_server.database import (
     get_triage_items,
 )
 
-VOICE_PROFILE_PATH = Path.home() / ".claude" / "rules" / "brendan-voice-profile.md"
+# Optional voice profile for /draft. Set BRIEFCASE_VOICE_PROFILE to the
+# absolute path of a markdown file describing your writing voice; the
+# sidecar inlines it into the draft prompt. If unset or missing, /draft
+# still works — it just produces a neutral-tone draft.
+_voice_env = os.environ.get("BRIEFCASE_VOICE_PROFILE")
+VOICE_PROFILE_PATH: Optional[Path] = Path(_voice_env).expanduser() if _voice_env else None
 LAST_DRAFT_PATH = Path.home() / ".briefcase" / "last_draft.txt"
 CLAUDE_CLI_FALLBACKS = [
     Path.home() / ".local" / "bin" / "claude",
@@ -137,13 +142,13 @@ class TangentAvailabilityOut(BaseModel):
 class DraftIn(BaseModel):
     """A draft request from the extension."""
     content: str = Field(..., min_length=1, max_length=20_000,
-                         description="The original message Brendan is replying to (or topic of the new message).")
+                         description="The original message the user is replying to (or topic of the new message).")
     context: Optional[str] = Field(None, max_length=10_000,
-                                   description="Brendan's notes/intent for the reply: tone, points to hit, deadlines, etc.")
+                                   description="The user's notes/intent for the reply: tone, points to hit, deadlines, etc.")
     tone: str = Field("informal", pattern="^(informal|formal)$",
                       description="Voice mode. 'informal' for Chat/Slack/email, 'formal' for RFCs/docs.")
     mode: str = Field("reply", pattern="^(reply|new|cleanup)$",
-                      description="What we're doing: replying to the content, drafting a new message about the topic, or cleaning up Brendan's word-vomit.")
+                      description="What we're doing: replying to the content, drafting a new message about the topic, or cleaning up the user's rough draft.")
     destination: str = Field("google-chat", pattern="^(markdown|google-chat|slack|plaintext)$",
                              description="Where the drafted text will be pasted. Controls formatting rules: 'google-chat'/'slack'/'plaintext' emit NO markdown chars (no *bold*, no [text](url) links — bare URLs only). 'markdown' is full Github-flavored markdown. Defaults to 'google-chat' because that's the dominant extension use case and the most common formatting-noise pain point.")
 
@@ -182,13 +187,12 @@ _DESTINATION_RULES = {
         "- NO code fences (```). For code/commands, drop a paragraph break and write the code on its own line.\n"
         "- Bullets are OK as plain '-' or '•' at line start (Chat renders them as text, fine).\n"
         "- Paragraph breaks (blank line between paragraphs) are preserved by Chat — use them.\n"
-        "If a markdown character ends up in the output, Brendan has to clean it up by hand. Do not make him."
+        "If a markdown character ends up in the output, the user has to clean it up by hand. Do not make them."
     ),
     "slack": (
         "DESTINATION: slack. Treat like google-chat: NO *bold*, NO _italic_, NO [text](url) syntax. "
         "Emit bare URLs. Plain '-' bullets and paragraph breaks are fine. "
-        "(Slack has its own mrkdwn dialect, but Brendan's usage doesn't lean on it — keep formatting "
-        "characters out unless he asked for them.)"
+        "(Slack has its own mrkdwn dialect — keep formatting characters out unless the user asked for them.)"
     ),
     "plaintext": (
         "DESTINATION: plaintext. NO formatting characters at all — no *bold*, no _italic_, "
@@ -198,27 +202,28 @@ _DESTINATION_RULES = {
 
 
 def _build_draft_prompt(body: "DraftIn") -> str:
-    """Construct the prompt sent to `claude -p`. Inlines the voice profile
-    and applies destination-specific formatting rules so the output renders
-    cleanly where it will be pasted."""
+    """Construct the prompt sent to `claude -p`. Inlines an optional
+    voice profile (via BRIEFCASE_VOICE_PROFILE) and applies destination-
+    specific formatting rules so the output renders cleanly where it will
+    be pasted."""
     voice_profile = ""
-    if VOICE_PROFILE_PATH.exists():
+    if VOICE_PROFILE_PATH is not None and VOICE_PROFILE_PATH.exists():
         voice_profile = VOICE_PROFILE_PATH.read_text()
 
     if body.mode == "reply":
-        task = "Brendan needs to reply to the following message. Draft his reply."
-        target_label = "Message Brendan is replying to"
+        task = "The user needs to reply to the following message. Draft their reply."
+        target_label = "Message the user is replying to"
     elif body.mode == "cleanup":
-        task = "Brendan wrote the following rough draft. Clean it up in his voice without changing his meaning or points."
-        target_label = "Brendan's rough draft"
+        task = "The user wrote the following rough draft. Clean it up in their voice without changing their meaning or points."
+        target_label = "User's rough draft"
     else:
-        task = "Brendan wants to send a message. The topic and intent follow."
+        task = "The user wants to send a message. The topic and intent follow."
         target_label = "Topic / intent"
 
     parts = []
     if voice_profile:
         parts.append(
-            "You are drafting a message in Brendan Roman's authentic voice. "
+            "You are drafting a message in the user's authentic voice. "
             "Internalize this voice profile completely before writing:"
         )
         parts.append("---")
@@ -234,13 +239,13 @@ def _build_draft_prompt(body: "DraftIn") -> str:
     parts.append(body.content.strip())
     if body.context:
         parts.append("")
-        parts.append("## Brendan's notes / context for the draft")
+        parts.append("## User's notes / context for the draft")
         parts.append(body.context.strip())
     parts.append("")
     parts.append(
         "Output ONLY the draft body — no preamble, no 'Here's the draft:', "
         "no markdown wrappers (no leading ```), no signature, no closing remarks. "
-        "Just the exact text Brendan would paste at the destination. "
+        "Just the exact text the user would paste at the destination. "
         "Preserve paragraph breaks where they help readability. "
         "Re-read the DESTINATION rules above one more time before finalizing — "
         "no markdown characters slip through when the destination forbids them."
@@ -296,8 +301,10 @@ def create_app() -> FastAPI:
         body: DraftIn,
         x_briefcase_token: Optional[str] = Header(default=None, alias="X-BriefCase-Token"),
     ) -> DraftOut:
-        """Draft a message in Brendan's voice via `claude -p`. Uses the user's
-        existing Claude Code subscription auth (no separate API key)."""
+        """Draft a message via `claude -p`. Uses the user's existing Claude
+        Code subscription auth (no separate API key). If BRIEFCASE_VOICE_PROFILE
+        points at a markdown file, that profile is inlined into the prompt so
+        the draft is in the user's voice; otherwise the draft is neutral-tone."""
         _require_auth(x_briefcase_token)
 
         claude_bin = _resolve_claude_cli()

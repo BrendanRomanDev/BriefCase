@@ -159,7 +159,7 @@ async def project_retro(
                 "meeting notes filed, tasks completed, repo activity (PRs merged, commits). "
                 "End with a Trends & Observations section covering velocity, recurring blockers, "
                 "scope changes, and team dynamics. Add 1-3 actionable recommendations. "
-                "Offer to save the retro to ThriveNotes and brain dump any action items."
+                "Offer to save the retro to the vault and brain dump any action items."
             )
         }
 

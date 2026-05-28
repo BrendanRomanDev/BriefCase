@@ -16,7 +16,7 @@ async def get_decision_log(
     """Query the decision log. Filter by initiative and/or status.
 
     Default status='pending' returns decisions that haven't been consumed
-    yet — typically what a Thriveworks-repo dev session wants when bulk-
+    yet — typically what a code-repo dev session wants when bulk-
     updating an in-repo decisions.md file.
 
     Pass status='all' (or None / empty) to include consumed decisions too.
@@ -50,7 +50,7 @@ async def get_decision_log(
 TOOL_NAME = "get_decision_log"
 TOOL_DESCRIPTION = (
     "Query the decision log. Default status='pending' returns decisions "
-    "that haven't been consumed yet - typically what a Thriveworks-repo "
+    "that haven't been consumed yet - typically what a code-repo "
     "dev session wants when bulk-updating an in-repo decisions.md file. "
     "Use status='consumed' or 'all' to see history. Each row carries "
     "decision, rationale, decided_at, source_url, and metadata."

@@ -7,12 +7,32 @@ import yaml
 
 DEFAULTS = {
     "database_path": str(Path.home() / ".briefcase" / "briefcase.db"),
-    "obsidian_vault": str(Path.home() / "Notes" / "ThriveNotes"),
+    # No vault default — set during /onboard. Tools requiring it must
+    # check for None and surface a "run /onboard" message.
+    "obsidian_vault": None,
     "user_profile": str(Path.home() / ".briefcase" / "user_profile.yaml"),
     "backup_dir": str(Path.home() / ".briefcase" / "backups"),
+    # PDLC is an optional, opinionated integration. If the path doesn't
+    # exist on disk the PDLC tools degrade gracefully.
     "pdlc_repo": str(Path.home() / "Programming" / "pdlc"),
     "features": {"printing": False, "repo_integration": True},
 }
+
+
+VAULT_NOT_CONFIGURED_MSG = (
+    "Obsidian vault is not configured. Run `/onboard` to set up your vault, "
+    "or add `obsidian_vault: /path/to/vault` to settings.yaml."
+)
+
+
+def require_vault(settings: Optional[dict] = None) -> str:
+    """Return the configured vault path or raise with a clear /onboard prompt."""
+    if settings is None:
+        settings = load_settings()
+    vault = settings.get("obsidian_vault")
+    if not vault:
+        raise RuntimeError(VAULT_NOT_CONFIGURED_MSG)
+    return vault
 
 
 def load_settings(settings_path: Optional[str] = None) -> dict:

@@ -139,9 +139,9 @@ async def triage_item(
       - daily_note: mark the queue item resolved — the agent is expected
         to have called plan_daily separately to add this to a day's notes.
       - kudos: mark the queue item resolved — the agent is expected to
-        have drafted the kudos in Brendan's voice (destination=google-chat),
-        gotten approval, pbcopied, AND appended an entry to
-        ~/Notes/ThriveNotes/kudos/YYYY-kudos.md. Use resolution_note to
+        have drafted the kudos (destination=google-chat), gotten approval,
+        copied to clipboard, AND appended an entry to
+        <vault>/kudos/YYYY-kudos.md. Use resolution_note to
         record the recipient + file path.
       - discard: mark resolved with no further action.
       - mark_resolved: generic "I handled this externally" — optionally
@@ -260,7 +260,7 @@ async def triage_item(
                 result["obsidian_folder"] = str(project_dir)
 
         elif action == "thrivenote":
-            result["message"] = "Marked as filed to ThriveNotes"
+            result["message"] = "Marked as filed to the vault"
             if resolution_note:
                 result["resolution_note"] = resolution_note
 
@@ -310,7 +310,7 @@ TOOL_DESCRIPTION = (
     "Resolve a triage queue item by routing it into a destination: "
     "brain_dump (new inbox item), initiative (new project), thrivenote "
     "(agent filed externally), daily_note (agent added to a daily), "
-    "kudos (agent drafted shout-out + appended to ~/Notes/ThriveNotes/kudos/"
+    "kudos (agent drafted shout-out + appended to <vault>/kudos/"
     "YYYY-kudos.md), discard, or mark_resolved. Source URL + metadata are "
     "automatically carried onto brain_dump and initiative destinations. "
     "Always walks the user through the decision — do not call without their input."
