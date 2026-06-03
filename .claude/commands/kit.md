@@ -85,15 +85,26 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 **The walk:**
 1. Call `get_triage_queue()` to get all pending items. Each item may include a `children: [...]` array of attached captures — treat the parent + its children as ONE composite item: union their flags (any-true wins), concatenate their source URLs, and pass the parent's `item_id` to `triage_item`. The MCP resolves children automatically when the parent resolves.
 2. Call `get_runtime_capabilities()` ONCE to learn whether tangent dispatch is available. Cache the result for the rest of the walk. This drives auto-run behavior below.
-3. **Auto-run sweep (first thing, before presenting anything to Brendan).** Partition items by `flags.auto_file` (UI label: "Auto-run"):
-   - **If `tangent.available` is true**: for each auto-run item, claim it (`claim_triage_item`), then invoke the appropriate tangent skill via the `Skill` tool. Pick the skill from `runtime.tangent`:
-     - If the item has ONLY research flags (`needs_code_research`, `search_around`, `needs_web_research`) and no action flags → use `skill_research` (tangent-teach).
-     - Otherwise → use `skill_work` (plain tangent).
-     Build the handoff content as the skill's argument: include the captured content, source URL(s) from parent + any children, the unioned flag set, and any `user_context` from metadata. Then call `triage_item(item_id, action='mark_resolved', resolution_note="spawned tangent skill=<name>")` to close the queue item. **Do NOT also perform inline destination filing** — the tangent owns the work now.
-   - **If `tangent.available` is false** (no WezTerm or detection failed): fall back to inline auto-file behavior. For each auto-run item: claim it, infer destination from content + context (any of the normal routes — `brain_dump`, `thrivenote`, `daily_note`, `initiative`, `discard`, `mark_resolved`), file it via the normal destination-specific path, then run any post-resolution side-effects implied by other flags on the same item (e.g. `auto_file + needs_jira` → file the inbox item AND draft+create the ticket AND `add_external_ref` it onto the resulting entity, all without prompting).
-   - Anchor: *Brendan wouldn't have clicked auto if it mattered too much.* Lean toward "pick something reasonable and move on." Only ask if genuinely stuck (e.g. content references a person whose file Brendan would clearly want to confirm placement on, or an ambiguous initiative slug with no nearby hint). Asking should be the rare exception.
-   - If you really can't classify an item with confidence, leave it pending (release the claim) and surface it in the human-review section of the walk instead. Don't ask mid-sweep.
-   - Report **per item** what was done and where: title/preview, destination (or tangent skill + handoff topic), path or ID. Render before moving to the interactive walk. If the auto-batch is large (>5 items), group by destination/tangent in the summary.
+3. **Auto-run sweep (first thing, before presenting anything to Brendan).** Partition items by `flags.auto_file` (UI label: "Auto-run") into `auto[]` and `non_auto[]`. **Drain ALL of `auto[]` before touching `non_auto[]`.** Auto items dispatch as a concurrent batch, not chronologically — each tangent runs in its own WezTerm tab and is fully independent, so there's no reason to serialize.
+
+   **Three-phase concurrent batching.** Each phase is a single assistant turn that fires every call in parallel via one tool-use block:
+   - **Phase 1 — claim all.** Issue every `claim_triage_item` for `auto[]` in parallel.
+   - **Phase 2 — dispatch all.** For each successfully-claimed item:
+     - **If `tangent.available` is true**: invoke the appropriate tangent skill via the `Skill` tool. Pick from `runtime.tangent`:
+       - ONLY research flags (`needs_code_research`, `search_around`, `needs_web_research`) and no action flags → `skill_research` (tangent-teach).
+       - Otherwise → `skill_work` (plain tangent).
+       Build the handoff content as the skill's argument: captured content, source URL(s) from parent + any children, the unioned flag set, and any `user_context` from metadata.
+     - **If `tangent.available` is false**: infer destination from content + context (any of `brain_dump`, `thrivenote`, `daily_note`, `initiative`, `discard`, `mark_resolved`) and file via the normal destination-specific path, plus any post-resolution side-effects implied by other flags (e.g. `auto_file + needs_jira` → file + draft+create the ticket + `add_external_ref`).
+     All dispatches fire in parallel in a single tool-use block — do NOT serialize them.
+   - **Phase 3 — resolve all.** Issue every `triage_item(item_id, action='mark_resolved', resolution_note="spawned tangent skill=<name>")` (or the destination-specific resolution for the inline fallback) in parallel. **Tangent-dispatched items get `mark_resolved` only** — the tangent owns the work, do NOT also perform inline destination filing.
+
+   **Edge cases inside the batch:**
+   - If a claim fails with `already_claimed`, drop that item from the rest of the sweep — keep dispatching the others. Surface the conflict in the post-sweep report.
+   - If an item can't be classified with confidence in Phase 2, release the claim and move it into `non_auto[]` for the interactive walk. Don't ask mid-sweep.
+
+   **Anchor:** *Brendan wouldn't have clicked auto if it mattered too much.* Lean toward "pick something reasonable and move on." Only ask if genuinely stuck — asking should be the rare exception.
+
+   **Report per item** what was done and where: title/preview, destination (or tangent skill + handoff topic), path or ID. Render the full batch report before moving to the interactive walk. If the auto-batch is large (>5 items), group by destination/tangent in the summary.
 4. For each remaining (non-auto) item, present it clearly with:
    - Source (e.g. `google_chat`, `web_clip`) and an "open in source" link using `source_url`
    - Title (if present) + a preview of `content` (first ~200 chars, full on request)
@@ -125,7 +136,7 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 
 **Capture-time flags** — each queue item may include a `flags` dict set in the Chrome extension compose popup. Always surface these when presenting an item, and act on them during the triage conversation:
 
-- `auto_file: true` → Brendan has pre-decided that **you** should handle this without asking. Sweep these at the top of the walk (see step 2 of "The walk" above). Do NOT prompt during the sweep unless genuinely stuck. Report per-item what you did and where. Other flags on the same item still fire as post-resolution side-effects (e.g. `auto_file + needs_jira` → file + draft+create the ticket + `add_external_ref`, all without prompting). **Exception: `auto_file + kudos` always pauses for approval before filing** — tone matters too much to file a shout-out silently. The sweep drafts the kudos and stages it; you surface the draft in the next Kit interaction with an "approve to file" step.
+- `auto_file: true` → Brendan has pre-decided that **you** should handle this without asking. Sweep these at the top of the walk (see step 2 of "The walk" above). Do NOT prompt during the sweep unless genuinely stuck. Report per-item what you did and where. Other flags on the same item still fire as post-resolution side-effects (e.g. `auto_file + needs_jira` → file + draft+create the ticket + `add_external_ref`, all without prompting). Auto means auto — every flag combination (kudos included) dispatches via the same auto-sweep path; the tangent conversation is the review surface when one is involved.
 
 - `is_brain_dump: true` → Brendan has pre-decided the destination. **Skip** the "what should I do with this?" question and route straight to brain_dump. Still confirm the brain_dump fields (title, description, complexity, urgency, initiative_slug, target_week) before calling `triage_item` — the destination is decided but the metadata isn't. Other flags still apply as post-resolution side-effects.
 
@@ -189,7 +200,7 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
      BRIEFCASE_DRAFT_EOF
      ```
   7. **Resolve the queue item** via `triage_item(item_id, action='kudos', resolution_note="<recipient> → ~/Notes/ThriveNotes/kudos/<year>-kudos.md")`.
-  8. **Auto-sweep carveout:** even when `auto_file: true` is set, kudos items do NOT silently file. Auto-sweep drafts the kudos and stages it (presents the draft + appends nothing yet), then **pauses for Brendan's approval** before writing to ThriveNotes + pbcopying. Surface staged kudos drafts in the next Kit interaction with an explicit "approve to file" step. Tone matters too much to file silently.
+  8. **When paired with `auto_file: true`:** kudos dispatches through the normal auto-sweep path like any other auto item — the tangent conversation is the approval surface. No separate "approve to file" gate in Kit's main thread. Auto means auto.
 
 - `is_person: true` → the captured content is information about a person Brendan interacts with. People live in the vault at `~/Notes/ThriveNotes/people/` (one markdown file per person — established 2026-04-24). Process:
   1. **Determine the person.** Prefer `flags.person_name` if set in the popup. Otherwise extract from content/context. If still unclear, ASK.
@@ -215,7 +226,7 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
      Confirm placement + filename with Brendan, then write.
   5. **Resolve the queue item** as `mark_resolved` (the file is the action). Or alongside `brain_dump` if there's a follow-up action embedded ("ping them about X next week").
 
-Multiple flags may be set. Handle in this order: **auto_file** (if set, the whole item is handled in the sweep step — tangent-dispatched when available, otherwise inline destination + side-effect logic below, just without prompting; **`kudos` is the carve-out** — auto-sweep drafts but pauses for approval before filing) → **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else `kudos` if set, else user choice) → **needs_jira / needs_code_research / needs_web_research / needs_pr_review / needs_meeting / needs_reply / is_decision / is_person** as post-resolution side-effects.
+Multiple flags may be set. Handle in this order: **auto_file** (if set, the whole item is handled in the sweep step — tangent-dispatched when available, otherwise inline destination + side-effect logic below, just without prompting; every flag combination flows through the same path, kudos included) → **search_around** (informs everything else) → **triage destination** (driven by `is_brain_dump` if set, else `kudos` if set, else user choice) → **needs_jira / needs_code_research / needs_web_research / needs_pr_review / needs_meeting / needs_reply / is_decision / is_person** as post-resolution side-effects.
 
 ### Queue Concurrency (multi-agent coordination)
 
