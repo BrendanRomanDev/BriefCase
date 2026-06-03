@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BriefCase</title>
+<link rel="stylesheet" href="themes.css">
+<link rel="stylesheet" href="sidepanel.css">
+<script src="theme.js"></script>
+</head>
+<body>
+  <header class="panel-header">
+    <h1>BriefCase</h1>
+    <a id="options-link" href="#" title="Open options">options</a>
+  </header>
+
+  <div id="health" class="health">Checking sidecar...</div>
+
+  <div class="source-title-block" id="source-title-block">
+    <img id="source-favicon" class="favicon" alt="" />
+    <span id="source-title" class="source-title-text">—</span>
+  </div>
+
+  <div class="url-block">
+    <label for="source-url" class="field-label">
+      Source link
+      <span class="label-hint" id="url-hint">&nbsp;</span>
+    </label>
+    <input type="text" id="source-url" class="url" spellcheck="false" autocomplete="off" placeholder="https://..." />
+    <div class="hint">Edit if you want a more specific anchor. On Google Chat: <strong>More actions</strong> on the message → <strong>Copy message link</strong>, then paste here (or we'll auto-paste on open).</div>
+  </div>
+
+  <div class="flags-section" id="section-identity">
+    <span class="group-label">What is this?</span>
+    <div class="flags-grid single-col">
+      <label class="flag-row">
+        <input type="checkbox" id="flag-brain-dump" />
+        <span>Brain dump (postpone for later)</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-decision" />
+        <span>A decision (file under an initiative)</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-person" />
+        <span>About a person</span>
+      </label>
+    </div>
+    <div class="conditional-block" id="person-block">
+      <label for="person-name" class="field-label">Person name (optional - Kit will infer from content if blank)</label>
+      <input type="text" id="person-name" placeholder="e.g. Dave Shapiro" autocomplete="off" spellcheck="false" />
+    </div>
+  </div>
+
+  <div class="flags-section" id="section-context">
+    <span class="group-label">Context to gather <span class="group-hint">(Kit gathers before acting)</span></span>
+    <div class="flags-grid single-col">
+      <label class="flag-row">
+        <input type="checkbox" id="flag-code-research" />
+        <span>Code research / repo context</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-search-around" />
+        <span>Search around (vault + inbox)</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-web-research" />
+        <span>Web research / best practices</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="flags-section" id="section-actions">
+    <span class="group-label">Actions Kit takes</span>
+    <div class="flags-grid single-col">
+      <label class="flag-row">
+        <input type="checkbox" id="flag-jira" />
+        <span>Create a Jira ticket</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-pr-review" />
+        <span>Review a PR</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-meeting" />
+        <span>Schedule a meeting</span>
+      </label>
+      <label class="flag-row">
+        <input type="checkbox" id="flag-reply" />
+        <span>Draft a reply</span>
+      </label>
+    </div>
+    <div class="conditional-block" id="epic-block">
+      <label for="epic-hint" class="field-label">Epic hint (Jira key)</label>
+      <input type="text" id="epic-hint" placeholder="e.g. THRIV-13413" autocomplete="off" spellcheck="false" />
+    </div>
+    <div class="conditional-block" id="meeting-block">
+      <label for="meeting-attendees" class="field-label">Attendees (comma-separated emails)</label>
+      <input type="text" id="meeting-attendees" placeholder="e.g. dave.shapiro@thriveworks.com, soham.trivedi@thriveworks.com" autocomplete="off" spellcheck="false" />
+    </div>
+  </div>
+
+  <div class="flags-section dispatch" id="section-dispatch">
+    <span class="group-label">How Kit handles this</span>
+    <div class="flags-grid single-col">
+      <label class="flag-row">
+        <input type="checkbox" id="flag-auto-file" />
+        <span>Auto-run (Kit acts autonomously; spawns a tangent tab when available)</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="attach-block">
+    <label for="attach-parent">Attach to</label>
+    <select id="attach-parent">
+      <option value="">— standalone capture —</option>
+    </select>
+  </div>
+
+  <div class="content-block">
+    <label for="content" class="field-label">Captured content</label>
+    <textarea id="content" spellcheck="false" placeholder="The captured text appears here. Edit freely before sending."></textarea>
+  </div>
+
+  <div class="divider">additional context</div>
+
+  <div class="context-block">
+    <label for="context" class="field-label">Additional context (optional)</label>
+    <textarea id="context" placeholder="Why are you capturing this? What's the ask? What's the deadline? Which initiative does it relate to?"></textarea>
+  </div>
+
+  <div class="row">
+    <button id="send">Send (⌘↩)</button>
+    <button id="draft-now" title="Draft a reply in your voice via the sidecar (uses claude -p, ~5-10s)">Draft now (⌘D)</button>
+    <button id="clear">Clear</button>
+    <span id="status" class="status hint"></span>
+  </div>
+
+  <div id="draft-result" class="draft-result" hidden>
+    <div class="draft-header">
+      <span class="draft-title">Drafted reply</span>
+      <span id="draft-meta" class="draft-meta"></span>
+    </div>
+    <textarea id="draft-text" spellcheck="false"></textarea>
+    <div class="draft-actions">
+      <button id="draft-copy">Copy to clipboard</button>
+      <button id="draft-redraft">Re-draft</button>
+      <button id="draft-hide">Hide</button>
+    </div>
+  </div>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

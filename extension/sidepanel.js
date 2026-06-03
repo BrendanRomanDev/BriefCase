@@ -1,6 +1,12 @@
-// BriefCase compose popup: edit the captured content, override the source URL
-// (e.g. paste a Google Chat message permalink), and add extra context before
-// sending to the sidecar.
+// BriefCase side panel.
+//
+// Single persistent surface for capture. Hosts:
+//   - Health widget (sidecar reachable + version + pending count)
+//   - Compose form (edit content, override source URL, set flags, send)
+//
+// State lives globally (not per-tab). The form persists across tab switches.
+// On open / DOMContentLoaded we hydrate any pending capture stashed by the
+// background service worker in chrome.storage.session.
 
 const PENDING_CAPTURE_KEY = "pendingCapture";
 const DIVIDER = "---- additional context ----";
@@ -10,14 +16,22 @@ const URL_REGEX = /^https?:\/\/\S+$/i;
 const CHAT_MESSAGE_PERMALINK_REGEX =
   /^https:\/\/chat\.google\.com\/(dm|room)\/[^/?#]+\/[^/?#]+\/[^/?#]+/i;
 
+// ---- Element references ----
+
+const $options = document.getElementById("options-link");
+const $health = document.getElementById("health");
+
 const $sourceTitle = document.getElementById("source-title");
+const $sourceTitleBlock = document.getElementById("source-title-block");
+const $sourceFavicon = document.getElementById("source-favicon");
 const $sourceUrl = document.getElementById("source-url");
 const $urlHint = document.getElementById("url-hint");
 const $content = document.getElementById("content");
 const $context = document.getElementById("context");
 const $send = document.getElementById("send");
-const $cancel = document.getElementById("cancel");
+const $clear = document.getElementById("clear");
 const $status = document.getElementById("status");
+
 const $flagBrainDump = document.getElementById("flag-brain-dump");
 const $flagJira = document.getElementById("flag-jira");
 const $flagCodeResearch = document.getElementById("flag-code-research");
@@ -28,12 +42,8 @@ const $flagMeeting = document.getElementById("flag-meeting");
 const $flagReply = document.getElementById("flag-reply");
 const $flagDecision = document.getElementById("flag-decision");
 const $flagPerson = document.getElementById("flag-person");
-const $flagKudos = document.getElementById("flag-kudos");
 const $flagAutoFile = document.getElementById("flag-auto-file");
-const $kudosBanner = document.getElementById("kudos-banner");
-const $kudosRecipientBlock = document.getElementById("kudos-recipient-block");
-const $kudosRecipient = document.getElementById("kudos-recipient");
-const $sourceTitleBlock = document.getElementById("source-title-block");
+
 const $epicBlock = document.getElementById("epic-block");
 const $epicHint = document.getElementById("epic-hint");
 const $meetingBlock = document.getElementById("meeting-block");
@@ -55,10 +65,14 @@ const $draftHide = document.getElementById("draft-hide");
 let pending = null;
 let urlAutoFilledFromClipboard = false;
 
+// ---- Status ----
+
 function setStatus(text, kind) {
   $status.textContent = text;
   $status.className = `status ${kind || "hint"}`;
 }
+
+// ---- URL hint ----
 
 function describeUrl(url) {
   if (!url) return { text: "(no link)", kind: "" };
@@ -91,62 +105,73 @@ async function readClipboardUrl() {
   }
 }
 
-function applyKudosMode() {
-  // Pre-flag the capture as kudos, swap the page-source banner for the
-  // kudos banner, reveal the recipient field, and switch the textarea
-  // labels/placeholders to kudos-shaped prompts.
-  if ($sourceTitleBlock) $sourceTitleBlock.style.display = "none";
-  if ($kudosBanner) $kudosBanner.style.display = "";
-  if ($kudosRecipientBlock) $kudosRecipientBlock.style.display = "";
-  if ($flagKudos) $flagKudos.checked = true;
+// ---- Favicon helper ----
 
-  const contentLabel = document.querySelector(".content-block .field-label");
-  if (contentLabel) contentLabel.textContent = "What did they do? (the kudos-worthy thing)";
-  if ($content) {
-    $content.placeholder = "e.g. Randall unblocked the PMT data model thing — stayed late debugging the override resolver until it lit up green.";
-  }
-  const contextLabel = document.querySelector(".context-block .field-label");
-  if (contextLabel) contextLabel.textContent = "Any extra context (optional — tone, where to post, related work)";
-  if ($context) {
-    $context.placeholder = "e.g. wanted to call this out in the #kudos channel; bonus points if you can tie it to the PMT rebuild push.";
+function faviconUrlFor(pageUrl) {
+  if (!pageUrl) return "";
+  try {
+    const { origin } = new URL(pageUrl);
+    // Chrome's built-in favicon service requires the "favicon" permission for
+    // chrome-extension://...?pageUrl=... usage; use Google's S2 favicon as a
+    // permission-free fallback. Good enough for the one-liner header.
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(origin)}&sz=32`;
+  } catch (_e) {
+    return "";
   }
 }
 
-async function load() {
-  const data = await chrome.storage.session.get([PENDING_CAPTURE_KEY]);
-  pending = data[PENDING_CAPTURE_KEY] || null;
+// ---- Hydrate from background ----
+
+function applyPending(data) {
+  pending = data || null;
 
   if (!pending) {
-    setStatus("No pending capture found. Close this window and try again.", "err");
-    $send.disabled = true;
+    // Empty state — no source pre-fill, but the form is fully usable for
+    // standalone captures via the panel.
+    $sourceTitle.textContent = "(no source — standalone capture)";
+    if ($sourceFavicon) $sourceFavicon.removeAttribute("src");
     return;
   }
 
-  if (pending.kudos_mode) {
-    applyKudosMode();
-  } else {
-    $sourceTitle.textContent = pending.source_title || "(no title)";
+  $sourceTitle.textContent = pending.source_title || pending.source_url || "(no title)";
+  const favicon = faviconUrlFor(pending.source_url);
+  if ($sourceFavicon) {
+    if (favicon) $sourceFavicon.setAttribute("src", favicon);
+    else $sourceFavicon.removeAttribute("src");
   }
   $content.value = pending.initial_content || "";
+  $sourceUrl.value = pending.source_url || "";
+  refreshUrlHint();
+}
 
-  // Precedence for source URL:
-  //   1. Clipboard, if it's a URL (handles "copy message link" flow)
-  //   2. pending.source_url (page URL from the active tab)
+async function hydrateFromStorage({ focusContext } = {}) {
+  const data = await chrome.storage.session.get([PENDING_CAPTURE_KEY]);
+  const next = data[PENDING_CAPTURE_KEY] || null;
+  if (!next) {
+    applyPending(null);
+    return;
+  }
+
+  applyPending(next);
+
+  // Clipboard URL takes precedence over the tab URL (handles "copy message
+  // link" flow). Only attempt this on a fresh hydrate so we don't clobber
+  // the user typing into the field.
   const clipboardUrl = await readClipboardUrl();
   if (clipboardUrl) {
     $sourceUrl.value = clipboardUrl;
     urlAutoFilledFromClipboard = true;
-  } else {
-    $sourceUrl.value = pending.source_url || "";
+    refreshUrlHint();
   }
 
-  refreshUrlHint();
-  if (pending.kudos_mode && $kudosRecipient) {
-    $kudosRecipient.focus();
-  } else {
-    $context.focus();
-  }
+  // Clear the pending payload — we've absorbed it. Future tab-switches
+  // shouldn't re-trigger the hydrate.
+  await chrome.storage.session.remove(PENDING_CAPTURE_KEY);
+
+  if (focusContext) $context.focus();
 }
+
+// ---- Form helpers ----
 
 function isAttachedToParent() {
   return !!($attachParent && $attachParent.value);
@@ -161,15 +186,10 @@ function collectFlags() {
     if ($flagBrainDump.checked) flags.is_brain_dump = true;
     if ($flagDecision.checked) flags.is_decision = true;
     if ($flagPerson.checked) flags.is_person = true;
-    if ($flagKudos && $flagKudos.checked) flags.kudos = true;
     if ($flagAutoFile.checked) flags.auto_file = true;
     if ($flagPerson.checked) {
       const name = $personName.value.trim();
       if (name) flags.person_name = name;
-    }
-    if ($flagKudos && $flagKudos.checked && $kudosRecipient) {
-      const recipient = $kudosRecipient.value.trim();
-      if (recipient) flags.kudos_recipient = recipient;
     }
   }
   if ($flagJira.checked) flags.needs_jira = true;
@@ -195,35 +215,13 @@ function collectFlags() {
 }
 
 function syncEpicVisibility() {
-  if ($flagJira.checked) {
-    $epicBlock.classList.add("visible");
-  } else {
-    $epicBlock.classList.remove("visible");
-  }
+  $epicBlock.classList.toggle("visible", $flagJira.checked);
 }
-
 function syncMeetingVisibility() {
-  if ($flagMeeting.checked) {
-    $meetingBlock.classList.add("visible");
-  } else {
-    $meetingBlock.classList.remove("visible");
-  }
+  $meetingBlock.classList.toggle("visible", $flagMeeting.checked);
 }
-
 function syncPersonVisibility() {
-  if ($flagPerson.checked) {
-    $personBlock.classList.add("visible");
-  } else {
-    $personBlock.classList.remove("visible");
-  }
-}
-
-function syncKudosVisibility() {
-  if (!$flagKudos || !$kudosRecipientBlock) return;
-  // In kudos-mode launches the recipient field is already shown via
-  // applyKudosMode and the checkbox is pre-checked. From a regular capture,
-  // toggling the kudos checkbox reveals/hides the recipient field too.
-  $kudosRecipientBlock.style.display = $flagKudos.checked ? "" : "none";
+  $personBlock.classList.toggle("visible", $flagPerson.checked);
 }
 
 function buildClipFromForm() {
@@ -235,20 +233,28 @@ function buildClipFromForm() {
     ? `${captured}\n\n${DIVIDER}\n${context}`
     : captured;
 
-  const baseMetadata = (pending.baseClip && pending.baseClip.metadata) || {};
+  const baseClip = (pending && pending.baseClip) || {
+    source: "web_clip",
+    content: "",
+    source_url: null,
+    title: null,
+    metadata: {},
+  };
+  const baseMetadata = baseClip.metadata || {};
+  const captureType = (pending && pending.capture_type) || "panel_standalone";
   const metadata = {
     ...baseMetadata,
-    capture_type: pending.capture_type,
+    capture_type: captureType,
   };
   if (context) metadata.user_context = context;
   if (urlAutoFilledFromClipboard && urlValue) {
     metadata.url_source = "clipboard";
-  } else if (urlValue && urlValue !== pending.source_url) {
+  } else if (urlValue && pending && urlValue !== pending.source_url) {
     metadata.url_source = "user_edited";
   }
 
   const clip = {
-    ...pending.baseClip,
+    ...baseClip,
     content: combined,
     source_url: urlValue || null,
     metadata,
@@ -258,6 +264,8 @@ function buildClipFromForm() {
   if (parentId) clip.attach_to_id = parentId;
   return clip;
 }
+
+// ---- Attach-to-parent dropdown ----
 
 function formatAge(isoTimestamp) {
   if (!isoTimestamp) return "";
@@ -275,6 +283,10 @@ function formatAge(isoTimestamp) {
 
 async function loadAttachOptions() {
   if (!$attachParent) return;
+  // Reset to placeholder before repopulating (panel may refresh repeatedly).
+  while ($attachParent.options.length > 1) {
+    $attachParent.remove(1);
+  }
   try {
     const resp = await chrome.runtime.sendMessage({ type: "LIST_PENDING_TRIAGE", limit: 10 });
     if (!resp || !resp.ok || !Array.isArray(resp.data)) return;
@@ -302,8 +314,35 @@ function syncAttachInheritance() {
   }
 }
 
-async function send() {
-  if (!pending) return;
+// ---- Send / clear ----
+
+function resetForm() {
+  pending = null;
+  urlAutoFilledFromClipboard = false;
+  $content.value = "";
+  $context.value = "";
+  $sourceUrl.value = "";
+  $sourceTitle.textContent = "(no source — standalone capture)";
+  if ($sourceFavicon) $sourceFavicon.removeAttribute("src");
+  [
+    $flagBrainDump, $flagDecision, $flagPerson, $flagAutoFile,
+    $flagJira, $flagCodeResearch, $flagPrReview, $flagSearchAround,
+    $flagWebResearch, $flagMeeting, $flagReply,
+  ].forEach((el) => { if (el) el.checked = false; });
+  $epicHint.value = "";
+  $meetingAttendees.value = "";
+  $personName.value = "";
+  if ($attachParent) $attachParent.value = "";
+  syncEpicVisibility();
+  syncMeetingVisibility();
+  syncPersonVisibility();
+  syncAttachInheritance();
+  refreshUrlHint();
+  hideDraft();
+  setStatus("", "hint");
+}
+
+function send() {
   const clip = buildClipFromForm();
   if (!clip.content) {
     setStatus("Nothing to send — content is empty.", "err");
@@ -311,36 +350,33 @@ async function send() {
   }
 
   $send.disabled = true;
-  $cancel.disabled = true;
   setStatus("Sending...", "hint");
 
   chrome.runtime.sendMessage({ type: "SEND_CLIP", clip }, async (resp) => {
+    $send.disabled = false;
     if (!resp) {
       setStatus("No response from service worker.", "err");
-      $send.disabled = false;
-      $cancel.disabled = false;
       return;
     }
     if (!resp.ok) {
       setStatus(resp.error || "Failed to send.", "err");
-      $send.disabled = false;
-      $cancel.disabled = false;
       return;
     }
     setStatus(`Queued as #${resp.data.triage_item_id}.`, "ok");
-    await chrome.storage.session.remove(PENDING_CAPTURE_KEY);
-    setTimeout(() => window.close(), 350);
+    // Reset so the panel is ready for the next capture, but leave the status
+    // visible briefly so the user sees the confirmation.
+    setTimeout(() => {
+      resetForm();
+      loadAttachOptions();
+      refreshHealth();
+      setStatus(`Queued as #${resp.data.triage_item_id}.`, "ok");
+    }, 400);
   });
-}
-
-async function cancel() {
-  await chrome.storage.session.remove(PENDING_CAPTURE_KEY);
-  window.close();
 }
 
 // ---- Draft now ----
 
-async function draftNow() {
+function draftNow() {
   const captured = $content.value.trim();
   if (!captured) {
     setStatus("Nothing to draft from - the captured content is empty.", "err");
@@ -360,8 +396,6 @@ async function draftNow() {
         context: context || null,
         tone: "informal",
         mode: "reply",
-        // Extension captures are almost always Google Chat or web clips.
-        // Default to google-chat so markdown chars don't paste as literal noise.
         destination: "google-chat",
       },
     },
@@ -403,8 +437,37 @@ function hideDraft() {
   $draftText.value = "";
 }
 
+// ---- Health widget ----
+
+function refreshHealth() {
+  $health.textContent = "Checking sidecar...";
+  $health.classList.remove("err", "ok");
+  chrome.runtime.sendMessage({ type: "HEALTH_CHECK" }, (resp) => {
+    if (!resp) {
+      $health.innerHTML = `<span class="err">No response from service worker.</span>`;
+      return;
+    }
+    if (resp.ok) {
+      const { version, pending_count } = resp.data;
+      $health.innerHTML = `<span class="ok">Sidecar ${version}</span><span class="sep">·</span><span>${pending_count} pending</span>`;
+    } else {
+      $health.innerHTML = `<span class="err">Can't reach sidecar</span><span class="sep">·</span><span>${resp.error || ""}</span>`;
+    }
+  });
+}
+
+// ---- Wire up ----
+
+$options.addEventListener("click", (e) => {
+  e.preventDefault();
+  chrome.runtime.openOptionsPage();
+});
+
 $send.addEventListener("click", send);
-$cancel.addEventListener("click", cancel);
+$clear.addEventListener("click", () => {
+  resetForm();
+  $content.focus();
+});
 $draftNow.addEventListener("click", draftNow);
 $draftCopy.addEventListener("click", copyDraftToClipboard);
 $draftRedraft.addEventListener("click", () => {
@@ -422,23 +485,14 @@ $flagJira.addEventListener("change", () => {
   syncEpicVisibility();
   if ($flagJira.checked) $epicHint.focus();
 });
-
 $flagMeeting.addEventListener("change", () => {
   syncMeetingVisibility();
   if ($flagMeeting.checked) $meetingAttendees.focus();
 });
-
 $flagPerson.addEventListener("change", () => {
   syncPersonVisibility();
   if ($flagPerson.checked) $personName.focus();
 });
-
-if ($flagKudos) {
-  $flagKudos.addEventListener("change", () => {
-    syncKudosVisibility();
-    if ($flagKudos.checked && $kudosRecipient) $kudosRecipient.focus();
-  });
-}
 
 if ($attachParent) {
   $attachParent.addEventListener("change", syncAttachInheritance);
@@ -453,10 +507,33 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     draftNow();
   } else if (e.key === "Escape") {
-    e.preventDefault();
-    cancel();
+    // In a popup window, Esc closed it. In a persistent panel we just blur
+    // focus — there's no panel to close, and chrome.sidePanel.close() isn't
+    // available on stable everywhere.
+    if (document.activeElement && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
   }
 });
 
-load();
+// Background pushes us a hydrate signal after stashing a pending capture
+// from the user-gesture path (right-click, hotkey, action click). Re-read
+// session storage when that fires.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === "HYDRATE_PENDING") {
+    hydrateFromStorage({ focusContext: true });
+  }
+});
+
+// Storage change is a secondary path — if anything stashes a capture while
+// the panel is already open, pick it up.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "session" && changes[PENDING_CAPTURE_KEY]?.newValue) {
+    hydrateFromStorage({ focusContext: true });
+  }
+});
+
+// Initial load.
+refreshHealth();
 loadAttachOptions();
+hydrateFromStorage({ focusContext: false });

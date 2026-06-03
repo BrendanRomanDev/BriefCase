@@ -1,0 +1,362 @@
+/* BriefCase side panel.
+ *
+ * Single-column layout sized for Chrome's side panel (~360-400px wide).
+ * Vertical space is cheap here; horizontal space is the constraint.
+ */
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  margin: 0;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+#options-link {
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+}
+#options-link:hover { text-decoration: underline; }
+
+/* Health widget (top of panel, ported from popup.js) */
+.health {
+  font-size: 11.5px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--pane);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.health .ok { color: var(--ok); }
+.health .err { color: var(--err); }
+.health .sep {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* Source title block — one-liner with favicon */
+.source-title-block {
+  background: var(--pane);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.source-title-block .favicon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: 2px;
+}
+.source-title-block .favicon:not([src]),
+.source-title-block .favicon[src=""] {
+  display: none;
+}
+.source-title-text {
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.field-label {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 2px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--ink);
+}
+.label-hint {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--muted);
+}
+.label-hint.ok { color: var(--ok); }
+.label-hint.warn { color: var(--warn); }
+
+input[type="text"], textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  background: var(--pane);
+  color: var(--ink);
+}
+input[type="text"].url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+textarea {
+  resize: vertical;
+}
+input[type="text"]:focus, textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 -4px 0;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.divider::before, .divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+button {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+#send {
+  background: var(--accent);
+  color: var(--bg);
+}
+#clear, #draft-now {
+  background: var(--pane);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+button:hover { filter: brightness(1.05); }
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-left: auto;
+  font-size: 12px;
+}
+.status.ok { color: var(--ok); }
+.status.err { color: var(--err); }
+.hint { color: var(--muted); font-size: 11px; }
+
+/* Textareas get more vertical room — side panel has it to spare. */
+.content-block textarea { min-height: 160px; }
+.context-block textarea { min-height: 120px; }
+
+.flags-section {
+  background: var(--pane);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.flags-section .group-label {
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  margin-bottom: 8px;
+  display: block;
+}
+.flags-section .group-hint {
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  margin-left: 6px;
+}
+.flags-section.dispatch {
+  border-style: dashed;
+  background: transparent;
+}
+
+.flags-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 14px;
+}
+.flags-grid.single-col {
+  grid-template-columns: 1fr;
+}
+
+.flag-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+}
+.flag-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.flags-section.inherited-from-parent {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.flags-section.inherited-from-parent .group-label::after {
+  content: " · inherited from parent";
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.conditional-block {
+  margin-top: 10px;
+  display: none;
+}
+.conditional-block.visible { display: block; }
+.conditional-block label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  margin-bottom: 4px;
+  display: block;
+}
+.conditional-block input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+}
+
+.attach-block {
+  background: var(--pane);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.attach-block label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.attach-block select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--pane);
+  color: var(--ink);
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+.attach-block select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.draft-result {
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--pane);
+}
+.draft-result .draft-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.draft-result .draft-title {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.draft-result .draft-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.draft-result textarea {
+  min-height: 120px;
+  margin-bottom: 8px;
+}
+.draft-result .draft-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.draft-result button {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+#draft-copy {
+  background: var(--accent);
+  color: var(--bg);
+}
+#draft-redraft, #draft-hide {
+  background: var(--pane);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}

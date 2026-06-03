@@ -1,15 +1,16 @@
 {
   "manifest_version": 3,
   "name": "BriefCase",
-  "version": "0.13.0",
-  "description": "Capture selected text and send it to BriefCase's triage queue via a compose popup. Override the source URL (e.g. paste a specific Google Chat message link), add extra context, and send.",
+  "version": "0.14.0",
+  "description": "Capture selected text and send it to BriefCase's triage queue via a side panel. Override the source URL (e.g. paste a specific Google Chat message link), add extra context, and send.",
   "permissions": [
     "contextMenus",
     "storage",
     "notifications",
     "activeTab",
     "scripting",
-    "clipboardRead"
+    "clipboardRead",
+    "sidePanel"
   ],
   "host_permissions": [
     "http://127.0.0.1:8989/*"
@@ -23,12 +24,14 @@
   },
   "action": {
     "default_title": "BriefCase",
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon-16.png",
       "48": "icons/icon-48.png",
       "128": "icons/icon-128.png"
     }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "icons": {
     "16": "icons/icon-16.png",
@@ -41,7 +44,7 @@
         "default": "Ctrl+Shift+Y",
         "mac": "Command+Shift+Y"
       },
-      "description": "Open the BriefCase compose popup (uses current selection if any)"
+      "description": "Open the BriefCase side panel (uses current selection if any)"
     }
   }
 }

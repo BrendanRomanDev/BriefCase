@@ -1,9 +1,17 @@
 // BriefCase Chrome extension — service worker.
 //
-// All captures go through the compose popup (right-click menu or keyboard
-// shortcut). The popup lets you edit the content, override the source URL
-// (e.g. paste a specific Google Chat message permalink), and add context
-// beneath a divider before sending.
+// All captures route through the side panel. Three entry points open the
+// panel and pre-fill it with whatever context the user gesture surfaced:
+//
+//   - Toolbar action click (handled by setPanelBehavior)
+//   - Right-click context menu ("Send to BriefCase...")
+//   - Keyboard shortcut (Cmd/Ctrl+Shift+Y)
+//
+// IMPORTANT: chrome.sidePanel.open() MUST be called synchronously from the
+// user-gesture context. Any await before it loses the gesture token and the
+// call silently fails. Pattern: open the panel FIRST, then run the async
+// selection-fetch chain and stash the result in chrome.storage.session for
+// the panel to pick up on hydrate.
 
 const DEFAULT_SIDECAR_URL = "http://127.0.0.1:8989";
 
@@ -11,19 +19,27 @@ const MENU_SEND = "briefcase-send";
 
 const PENDING_CAPTURE_KEY = "pendingCapture";
 
-const COMPOSE_WIDTH = 660;
-const COMPOSE_HEIGHT = 760;
-
 // ---- Lifecycle ----
 
 chrome.runtime.onInstalled.addListener(() => {
   registerMenus();
+  enableSidePanelOnActionClick();
 });
 
-// Service workers go to sleep; rebuild menus on startup too.
+// Service workers go to sleep; rebuild menus + panel behavior on startup too.
 chrome.runtime.onStartup.addListener(() => {
   registerMenus();
+  enableSidePanelOnActionClick();
 });
+
+function enableSidePanelOnActionClick() {
+  // Makes the toolbar icon open the side panel directly. No popup involved.
+  if (chrome.sidePanel?.setPanelBehavior) {
+    chrome.sidePanel
+      .setPanelBehavior({ openPanelOnActionClick: true })
+      .catch((err) => console.warn("BriefCase: setPanelBehavior failed", err));
+  }
+}
 
 function registerMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -35,63 +51,82 @@ function registerMenus() {
   });
 }
 
-// ---- Menu click handling ----
+// ---- Entry points ----
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  try {
-    if (info.menuItemId === MENU_SEND) {
-      await openComposeWindow({
-        selectionText: info.selectionText || null,
-        linkUrl: info.linkUrl || null,
-        frameUrl: info.frameUrl || null,
-        pageUrl: info.pageUrl || tab?.url || null,
-        tab,
-      });
-    }
-  } catch (err) {
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId !== MENU_SEND) return;
+  // Open synchronously to preserve the gesture token, THEN do the async
+  // capture-prep work.
+  openPanelSync(tab);
+  stashCaptureFromMenu(info, tab).catch((err) => {
     console.error("BriefCase: menu capture failed", err);
-    await notify("BriefCase error", String(err.message || err));
-  }
+    notify("BriefCase error", String(err.message || err));
+  });
 });
 
-// ---- Keyboard shortcut ----
-//
-// Configure the binding at chrome://extensions/shortcuts.
-
-chrome.commands.onCommand.addListener(async (command) => {
+chrome.commands.onCommand.addListener((command) => {
   if (command !== "open_compose") return;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  // Same pattern: open first (sync), then do the async work.
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     if (!tab) return;
-
-    let selectionText = null;
-    try {
-      const [result] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => window.getSelection()?.toString() || "",
-      });
-      selectionText = (result?.result || "").trim() || null;
-    } catch (err) {
-      // Some pages (chrome://, web store) block scripting. Continue without selection.
-      console.warn("BriefCase: could not read selection", err);
-    }
-
-    await openComposeWindow({
-      selectionText,
-      linkUrl: null,
-      frameUrl: null,
-      pageUrl: tab.url || null,
-      tab,
+    openPanelSync(tab);
+    stashCaptureFromHotkey(tab).catch((err) => {
+      console.error("BriefCase: hotkey capture failed", err);
+      notify("BriefCase error", String(err.message || err));
     });
-  } catch (err) {
-    console.error("BriefCase: hotkey capture failed", err);
-    await notify("BriefCase error", String(err.message || err));
-  }
+  });
 });
 
-// ---- Compose popup ----
+function openPanelSync(tab) {
+  if (!chrome.sidePanel?.open) {
+    console.warn("BriefCase: chrome.sidePanel.open not available");
+    return;
+  }
+  try {
+    if (tab?.windowId != null) {
+      chrome.sidePanel.open({ windowId: tab.windowId });
+    } else if (tab?.id != null) {
+      chrome.sidePanel.open({ tabId: tab.id });
+    }
+  } catch (err) {
+    console.error("BriefCase: sidePanel.open failed", err);
+  }
+}
 
-async function openComposeWindow({ selectionText, linkUrl, frameUrl, pageUrl, tab }) {
+// ---- Capture prep ----
+
+async function stashCaptureFromMenu(info, tab) {
+  await stashPendingCapture({
+    selectionText: info.selectionText || null,
+    linkUrl: info.linkUrl || null,
+    frameUrl: info.frameUrl || null,
+    pageUrl: info.pageUrl || tab?.url || null,
+    tab,
+  });
+}
+
+async function stashCaptureFromHotkey(tab) {
+  let selectionText = null;
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => window.getSelection()?.toString() || "",
+    });
+    selectionText = (result?.result || "").trim() || null;
+  } catch (err) {
+    // Some pages (chrome://, web store) block scripting. Continue without.
+    console.warn("BriefCase: could not read selection", err);
+  }
+  await stashPendingCapture({
+    selectionText,
+    linkUrl: null,
+    frameUrl: null,
+    pageUrl: tab.url || null,
+    tab,
+  });
+}
+
+async function stashPendingCapture({ selectionText, linkUrl, frameUrl, pageUrl, tab }) {
   const pageTitle = tab?.title || null;
 
   // Decide effective capture type based on what's available.
@@ -135,13 +170,13 @@ async function openComposeWindow({ selectionText, linkUrl, frameUrl, pageUrl, ta
     },
   });
 
-  chrome.windows.create({
-    url: chrome.runtime.getURL("compose.html"),
-    type: "popup",
-    width: COMPOSE_WIDTH,
-    height: COMPOSE_HEIGHT,
-    focused: true,
-  });
+  // Nudge the side panel to hydrate. If it isn't open yet, this is a no-op
+  // (no listeners). When it loads, it reads chrome.storage.session itself.
+  try {
+    await chrome.runtime.sendMessage({ type: "HYDRATE_PENDING" });
+  } catch (_e) {
+    // No receiver yet — panel will hydrate on its DOMContentLoaded path.
+  }
 }
 
 // ---- Sidecar HTTP ----
@@ -186,6 +221,30 @@ async function postClip(clip) {
   return response.json();
 }
 
+async function postDraft(payload) {
+  const { url, token } = await getSidecarConfig();
+  if (!token) {
+    throw new Error(
+      "Auth token not configured. Open the BriefCase extension options and paste your token."
+    );
+  }
+  const response = await fetch(`${url}/draft`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-BriefCase-Token": token,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Sidecar /draft returned ${response.status}${detail ? ` - ${detail}` : ""}`
+    );
+  }
+  return response.json();
+}
+
 // ---- Notifications ----
 
 async function notify(title, message) {
@@ -201,79 +260,9 @@ async function notify(title, message) {
   }
 }
 
-// ---- Kudos compose ----
-//
-// Kudos captures don't come from a page selection — they're standalone
-// shout-outs Brendan wants to draft + file. We open the compose window
-// with kudos mode pre-flagged so the form adapts and the resulting clip
-// carries flags.kudos = true.
-
-async function openKudosCompose() {
-  // Try to grab the active tab so we have something to anchor source_url
-  // to if Brendan is on a page where the kudos was sparked. Falls back
-  // to no anchor — kudos doesn't require one.
-  let pageUrl = null;
-  let pageTitle = null;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab) {
-      pageUrl = tab.url || null;
-      pageTitle = tab.title || null;
-    }
-  } catch (err) {
-    console.warn("BriefCase: kudos tab lookup failed", err);
-  }
-
-  const baseMetadata = {
-    capture_type: "kudos",
-    page_url: pageUrl,
-    page_title: pageTitle,
-  };
-
-  const baseClip = {
-    source: "kudos",
-    content: "",
-    source_url: pageUrl,
-    title: null,
-    metadata: baseMetadata,
-  };
-
-  await chrome.storage.session.set({
-    [PENDING_CAPTURE_KEY]: {
-      baseClip,
-      capture_type: "kudos",
-      source_title: null,
-      source_url: pageUrl,
-      initial_content: "",
-      kudos_mode: true,
-    },
-  });
-
-  chrome.windows.create({
-    url: chrome.runtime.getURL("compose.html"),
-    type: "popup",
-    width: COMPOSE_WIDTH,
-    height: COMPOSE_HEIGHT,
-    focused: true,
-  });
-}
-
-// ---- Message handlers (popup + compose) ----
+// ---- Message handlers (side panel) ----
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === "OPEN_KUDOS_COMPOSE") {
-    (async () => {
-      try {
-        await openKudosCompose();
-        sendResponse({ ok: true });
-      } catch (err) {
-        console.error("BriefCase: open kudos compose failed", err);
-        sendResponse({ ok: false, error: String(err.message || err) });
-      }
-    })();
-    return true;
-  }
-
   if (msg?.type === "HEALTH_CHECK") {
     (async () => {
       try {
@@ -343,29 +332,3 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   return false;
 });
-
-// ---- Sidecar draft endpoint ----
-
-async function postDraft(payload) {
-  const { url, token } = await getSidecarConfig();
-  if (!token) {
-    throw new Error(
-      "Auth token not configured. Open the BriefCase extension options and paste your token."
-    );
-  }
-  const response = await fetch(`${url}/draft`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-BriefCase-Token": token,
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(
-      `Sidecar /draft returned ${response.status}${detail ? ` - ${detail}` : ""}`
-    );
-  }
-  return response.json();
-}

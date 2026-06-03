@@ -87,7 +87,7 @@ applyCachedTheme();
 syncTheme();
 
 // React to changes from other extension pages (e.g. options page changing
-// the theme while compose popup is open).
+// the theme while the side panel is open).
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "sync") return;
   if (changes[STORAGE_KEY]) {
