@@ -9,16 +9,13 @@
 </head>
 <body>
   <header class="panel-header">
-    <h1>BriefCase</h1>
+    <img id="source-favicon" class="favicon" alt="" src="icons/icon-16.png" />
+    <span id="source-title" class="source-title-text" title="">BriefCase</span>
+    <span id="health-dot" class="health-dot" title="Checking sidecar..."></span>
     <a id="options-link" href="#" title="Open options">options</a>
   </header>
 
-  <div id="health" class="health">Checking sidecar...</div>
-
-  <div class="source-title-block" id="source-title-block">
-    <img id="source-favicon" class="favicon" alt="" />
-    <span id="source-title" class="source-title-text">—</span>
-  </div>
+  <main class="scrollable">
 
   <div class="url-block">
     <label for="source-url" class="field-label">
@@ -128,13 +125,6 @@
     <textarea id="context" placeholder="Why are you capturing this? What's the ask? What's the deadline? Which initiative does it relate to?"></textarea>
   </div>
 
-  <div class="row">
-    <button id="send">Send (⌘↩)</button>
-    <button id="draft-now" title="Draft a reply in your voice via the sidecar (uses claude -p, ~5-10s)">Draft now (⌘D)</button>
-    <button id="clear">Clear</button>
-    <span id="status" class="status hint"></span>
-  </div>
-
   <div id="draft-result" class="draft-result" hidden>
     <div class="draft-header">
       <span class="draft-title">Drafted reply</span>
@@ -147,6 +137,16 @@
       <button id="draft-hide">Hide</button>
     </div>
   </div>
+  </main>
+
+  <footer class="sticky-footer">
+    <div class="row">
+      <button id="send">Send (⌘↩)</button>
+      <button id="draft-now" title="Draft a reply in your voice via the sidecar (uses claude -p, ~5-10s)">Draft now (⌘D)</button>
+      <button id="clear">Clear</button>
+      <span id="status" class="status hint"></span>
+    </div>
+  </footer>
 
   <script src="sidepanel.js"></script>
 </body>

@@ -1,5 +1,53 @@
 # BriefCase Changelog
 
+## Side panel migration + concurrent auto-sweep — 2026-06-03
+
+Three threads of work landed today under the `briefcase-capture-ux` initiative (see `~/Notes/ThriveNotes/Projects/briefcase-capture-ux/plan.md` for the full plan).
+
+### Concurrent auto-sweep for the triage queue (commit `1fdc810`)
+
+Kit's triage-walk auto-sweep is now a three-phase concurrent batch instead of one-item-at-a-time:
+
+1. **Claim all** auto-flagged items in parallel (single assistant turn, N parallel `claim_triage_item` calls).
+2. **Dispatch all** in parallel — Skill calls when tangent runtime is available, inline filing otherwise.
+3. **Resolve all** in parallel via `triage_item(action='mark_resolved', ...)`.
+
+Non-auto items drop into the interactive walk only AFTER the sweep finishes. Race handling: `already_claimed` drops that item from the rest of the sweep; mid-batch classify-failure releases the claim and demotes the item into the non-auto interactive bucket.
+
+**Kudos carve-out reverted.** Earlier scaffolding had kudos always pausing for approval even when `auto_file=true` was set. That carve-out is gone — auto now means auto. If a kudos item is auto-flagged and tangent is available, the sweep dispatches it to a tangent like any other auto item; the tangent conversation IS the review surface, no second gate needed.
+
+Triple instruction sync updated: `.claude/commands/kit.md`, `briefcase/mcp_server/server.py` (SERVER_INSTRUCTIONS), `~/.dotfiles/claude/commands-work/kit-lite.md`.
+
+### Chrome extension: popup → side panel (commit `ce5a118` + follow-up polish)
+
+Both surfaces — the action popup AND the free-floating compose window — collapsed into a single Manifest V3 side panel.
+
+**What changed:**
+- Manifest gets `sidePanel` permission, `side_panel.default_path: "sidepanel.html"`, and drops `action.default_popup`. Version bumped to `0.14.0`.
+- `chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` registered in both `onInstalled` and `onStartup` so the toolbar icon opens the panel directly.
+- Right-click "Send to BriefCase..." and `Cmd+Shift+Y` both call `chrome.sidePanel.open()` synchronously to preserve the user-gesture token, THEN run the async selection-capture chain. Without the sync-first ordering, Chrome silently drops the open call.
+- Hydrate flow: panel reads `chrome.storage.session.pendingCapture` on load and clears it after consumption so tab-switches don't re-hydrate stale data. A `chrome.storage.onChanged` listener handles the "panel already open when a fresh capture arrives" case.
+
+**Deletions:**
+- `popup.html`, `popup.js` — the action popup was a 30-line health widget plus an unintentional Kudos button. The Kudos button was an artifact, never deliberate; dropping it entirely (no migration into the new surface). Health widget ported into the panel header.
+- `compose.html` — the renderer-side compose form lives in `sidepanel.html` now.
+- `openComposeWindow`, `openKudosCompose`, the `OPEN_KUDOS_COMPOSE` message handler, and every `chrome.windows.create` call from `background.js`.
+
+### Side panel polish (uncommitted in this commit)
+
+Several iteration passes on top of the bare migration:
+
+- **Sticky action footer.** `Send / Draft now / Clear` are now anchored to the bottom of the panel in a `<footer class="sticky-footer">` with `position: sticky; bottom: 0`. The form body scrolls behind them so the buttons are always reachable even on long captures.
+- **Header redesign.** The header is now `[favicon] [tab title] [health dot] [options]` in a single row. The old standalone `#health` div and `.source-title-block` are gone. The tab title replaces the static "BriefCase" brand text when there's a pending capture; falls back to "BriefCase" in the empty state. Long titles ellipsis-truncate with a `title=""` tooltip for the full string.
+- **Health dot.** Sidecar status is a small colored dot (green = ok, red = err, muted = checking) next to the options link. Hover reveals `Sidecar 0.3.0 · 1 pending` (or `Can't reach sidecar · <error>`). Replaces the full-width health bar.
+- **Favicon fallback.** When the captured tab has no resolvable favicon (S2 lookup fails or there's no pending capture at all), the BriefCase extension icon (`icons/icon-16.png`) shows in its place. The HTML ships with the fallback as the initial `src` so there's no broken-image flash on first paint. An `error` listener on the `<img>` swaps to the fallback if a real favicon URL fails to load at runtime.
+- **Close hotkey.** New `Cmd+Shift+U` command bound to `chrome.sidePanel.close()`. Open (`Cmd+Shift+Y`) and close are two separate hotkeys rather than one toggling key — simpler than detecting open-state across tabs and avoiding edge cases around per-tab channeling. Chrome may require manual binding at `chrome://extensions/shortcuts` after the reload.
+- **Esc semantics.** In the old free-floating window, Esc closed the window. In the persistent panel, Esc only blurs focus.
+
+### Initiative tracking
+
+Filed `briefcase-capture-ux` (initiative #31) with the full three-thread plan saved to `~/Notes/ThriveNotes/Projects/briefcase-capture-ux/plan.md`. T1 (auto-sweep) shipped; T2 (side panel) shipped + verified in Chrome; T3 (clipboard image capture into the panel) not started.
+
 ## Kudos action + draft-skill destination formatting — 2026-05-26
 
 New end-to-end kudos drafting flow, plus a draft-skill formatting fix that resolves a long-standing Google Chat paste pain point.

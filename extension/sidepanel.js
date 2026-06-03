@@ -19,11 +19,25 @@ const CHAT_MESSAGE_PERMALINK_REGEX =
 // ---- Element references ----
 
 const $options = document.getElementById("options-link");
-const $health = document.getElementById("health");
+const $healthDot = document.getElementById("health-dot");
 
 const $sourceTitle = document.getElementById("source-title");
-const $sourceTitleBlock = document.getElementById("source-title-block");
 const $sourceFavicon = document.getElementById("source-favicon");
+const FALLBACK_ICON = chrome.runtime.getURL("icons/icon-16.png");
+
+function setFavicon(url) {
+  if (!$sourceFavicon) return;
+  $sourceFavicon.setAttribute("src", url || FALLBACK_ICON);
+}
+
+if ($sourceFavicon) {
+  // If a favicon URL fails to load (404, network), fall back to the extension icon.
+  $sourceFavicon.addEventListener("error", () => {
+    if ($sourceFavicon.getAttribute("src") !== FALLBACK_ICON) {
+      $sourceFavicon.setAttribute("src", FALLBACK_ICON);
+    }
+  });
+}
 const $sourceUrl = document.getElementById("source-url");
 const $urlHint = document.getElementById("url-hint");
 const $content = document.getElementById("content");
@@ -128,17 +142,16 @@ function applyPending(data) {
   if (!pending) {
     // Empty state — no source pre-fill, but the form is fully usable for
     // standalone captures via the panel.
-    $sourceTitle.textContent = "(no source — standalone capture)";
-    if ($sourceFavicon) $sourceFavicon.removeAttribute("src");
+    $sourceTitle.textContent = "BriefCase";
+    $sourceTitle.title = "";
+    setFavicon(null);
     return;
   }
 
-  $sourceTitle.textContent = pending.source_title || pending.source_url || "(no title)";
-  const favicon = faviconUrlFor(pending.source_url);
-  if ($sourceFavicon) {
-    if (favicon) $sourceFavicon.setAttribute("src", favicon);
-    else $sourceFavicon.removeAttribute("src");
-  }
+  const titleText = pending.source_title || pending.source_url || "(no title)";
+  $sourceTitle.textContent = titleText;
+  $sourceTitle.title = titleText;
+  setFavicon(faviconUrlFor(pending.source_url));
   $content.value = pending.initial_content || "";
   $sourceUrl.value = pending.source_url || "";
   refreshUrlHint();
@@ -322,8 +335,9 @@ function resetForm() {
   $content.value = "";
   $context.value = "";
   $sourceUrl.value = "";
-  $sourceTitle.textContent = "(no source — standalone capture)";
-  if ($sourceFavicon) $sourceFavicon.removeAttribute("src");
+  $sourceTitle.textContent = "BriefCase";
+  $sourceTitle.title = "";
+  setFavicon(null);
   [
     $flagBrainDump, $flagDecision, $flagPerson, $flagAutoFile,
     $flagJira, $flagCodeResearch, $flagPrReview, $flagSearchAround,
@@ -439,19 +453,25 @@ function hideDraft() {
 
 // ---- Health widget ----
 
+function setHealthDot(state, tooltip) {
+  $healthDot.classList.remove("ok", "err");
+  if (state === "ok") $healthDot.classList.add("ok");
+  else if (state === "err") $healthDot.classList.add("err");
+  $healthDot.title = tooltip;
+}
+
 function refreshHealth() {
-  $health.textContent = "Checking sidecar...";
-  $health.classList.remove("err", "ok");
+  setHealthDot(null, "Checking sidecar...");
   chrome.runtime.sendMessage({ type: "HEALTH_CHECK" }, (resp) => {
     if (!resp) {
-      $health.innerHTML = `<span class="err">No response from service worker.</span>`;
+      setHealthDot("err", "No response from service worker.");
       return;
     }
     if (resp.ok) {
       const { version, pending_count } = resp.data;
-      $health.innerHTML = `<span class="ok">Sidecar ${version}</span><span class="sep">·</span><span>${pending_count} pending</span>`;
+      setHealthDot("ok", `Sidecar ${version} · ${pending_count} pending`);
     } else {
-      $health.innerHTML = `<span class="err">Can't reach sidecar</span><span class="sep">·</span><span>${resp.error || ""}</span>`;
+      setHealthDot("err", `Can't reach sidecar${resp.error ? " · " + resp.error : ""}`);
     }
   });
 }

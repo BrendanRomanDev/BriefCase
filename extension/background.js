@@ -65,16 +65,25 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 chrome.commands.onCommand.addListener((command) => {
-  if (command !== "open_compose") return;
-  // Same pattern: open first (sync), then do the async work.
-  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-    if (!tab) return;
-    openPanelSync(tab);
-    stashCaptureFromHotkey(tab).catch((err) => {
-      console.error("BriefCase: hotkey capture failed", err);
-      notify("BriefCase error", String(err.message || err));
+  if (command === "open_compose") {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (!tab) return;
+      openPanelSync(tab);
+      stashCaptureFromHotkey(tab).catch((err) => {
+        console.error("BriefCase: hotkey capture failed", err);
+        notify("BriefCase error", String(err.message || err));
+      });
     });
-  });
+    return;
+  }
+  if (command === "close_panel") {
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (!tab) return;
+      try { chrome.sidePanel.close({ windowId: tab.windowId }); }
+      catch (err) { console.error("BriefCase: sidePanel.close failed", err); }
+    });
+    return;
+  }
 });
 
 function openPanelSync(tab) {
