@@ -1,5 +1,49 @@
 # BriefCase Changelog
 
+## Self-maintaining briefing doc — 2026-07-08
+
+New `render_briefing` tool (server bumped to `0.14.0`) that maintains Brendan's pen-and-paper daily carry-over list as a self-updating document at `~/Notes/ThriveNotes/briefing.md`, symlinked to `~/Desktop/Briefing.md`.
+
+### What it is (and deliberately is NOT)
+
+The briefing is a **co-authored working surface, NOT a projection of the database**. It's *informed by* the DB but allowed to lead it — it holds pre-initiative scoping threads, gear tickets, open-loop "what's the status of X" items, and don't-forget items (open enrollment deadline, broken Storybook deploy, OCR vendor drop). The DB is frequently behind; that's expected. Maintaining the briefing is the ritual that keeps Kit's data model honest, not the other way around.
+
+### Reconciliation flow (read-merge-reconcile, never regenerate)
+
+1. `render_briefing(mode='read')` — gather step. Returns the existing doc verbatim, a DB snapshot (initiatives + external_refs w/ new `assignee`/`status_line` + members + pending decisions + orphan ticket refs + roster), a batched `mismatches` report, and profile buckets. Returns a `scaffold` when no doc exists yet.
+2. Agent treats Brendan's prose as durable truth, layers in what changed, and surfaces `mismatches` as ONE "DB looks out of date — sync any?" checklist. DB corrections happen via the normal tools (`manage_initiative` / `add_external_ref` / `update_external_ref` / `manage_initiative_members`) based on his picks. The doc write NEVER blocks on DB sync.
+3. `render_briefing(mode='write', content=...)` — commit step. Writes the approved merged markdown, stamps a meta footer (idempotent — doesn't stack on re-render), and ensures the Desktop symlink. This tool NEVER mutates the DB.
+
+### Doc shape
+
+Grouped by bucket/theme (same buckets as `user_profile.yaml` projects), plus **Watch / Don't Forget** and **Backlog / Scoping** zones. Each line is one open loop: **item · owner · open-loop-or-status · link(s)**. Owner optional (`unassigned`); status is usually a question/next-action, not a closed fact.
+
+### Schema + tool changes
+
+- `external_refs` gains `assignee` and `status_line` columns (migrated via the existing `_migrate()` ALTER pattern). A Jira ticket ref now carries its own owner + one-line status.
+- New `update_external_ref` tool — set assignee/status_line/label/ref_url on an existing ref without re-adding it. Empty string clears a field (e.g. un-assign).
+- `add_external_ref` extended with optional `assignee` / `status_line`.
+
+### Triggers + queue-walk integration
+
+Rendered on explicit ask; offered once after Jira/ref changes in a session; offered once at the end of a queue-walk. NOT on every activation — but full-Kit activation now *reads* `briefing.md` (cheap file read) so Kit knows Brendan's open loops when planning. During triage, items that relate to an existing briefing line/bucket can be folded in (source link + one-line update), per-item with Brendan's confirmation.
+
+### Self-maintaining transcript sync (presence-triggered)
+
+The briefing keeps itself current by folding in the day's **recorded meetings** — without a cron and without metered API cost. The key realization: a cloud routine can't reach the local DB/vault, and any *unattended* inference (sidecar + `claude -p`) bills as API tokens. So the sync **piggybacks on Brendan already being in a Kit/kit-lite session** (subscription-covered) rather than firing on a clock.
+
+- **Source:** Google Calendar. A recorded meeting carries a "Notes by Gemini" Google Doc in its `attachments`; that's the transcript. No such attachment → logged as *not recorded*, never fabricated.
+- **`briefing_sync_state` tool** — freshness marker (`~/.briefcase/briefing_sync_state.json`) + weekend-aware day-window logic (`briefcase/mcp_server/sync_state.py`). `action='get'` returns `is_stale` + `scan_dates`; `action='record'` marks a sync done. "Everything since the last sync," so a **Monday reaches back to Friday** (Brendan doesn't work weekends); a gap spanning a weekend picks up Thu+Fri+Mon; first run defaults to a small window, not all history; explicit dates override.
+- **Presence-triggered dispatch:** on Kit/kit-lite activation, if the sync is stale it's dispatched **silently** to a sub-agent — a WezTerm tangent tab when available (via `get_runtime_capabilities()`), else an in-session `Agent`. Out-of-band so the main conversation stays fast. The sub-agent's instructions live at `.claude/commands/sync-transcripts.md` (symlinked to `~/.claude/commands/` via `command-bindings.conf`, invocable as `/sync-transcripts`).
+- **Staged, never live:** the sub-agent writes DB changes live but the briefing only to `briefing.staged.md` (new `render_briefing` `mode='staged'`), leaving a `<!-- sync-log -->` block. Brendan's Desktop `Briefing.md` never changes under him.
+- **"catch me up" / "briefing":** reviews the staged proposal + sync log, then `render_briefing(mode='promote')` moves staged → live on approval.
+
+### render_briefing modes
+
+Grew from two modes to four: `read` / `write` / `staged` (proposal, no symlink) / `promote` (staged → live, clears staged). The meta footer is idempotent across re-renders and promotions.
+
+Triple instruction sync updated: `.claude/commands/kit.md`, `briefcase/mcp_server/server.py` (SERVER_INSTRUCTIONS + activation checklist + TRANSCRIPT SYNC section), `~/.dotfiles/claude/commands-work/kit-lite.md`. New `/sync-transcripts` sub-agent command + `command-bindings.conf` entry.
+
 ## Side panel migration + concurrent auto-sweep — 2026-06-03
 
 Three threads of work landed today under the `briefcase-capture-ux` initiative (see `~/Notes/ThriveNotes/Projects/briefcase-capture-ux/plan.md` for the full plan).

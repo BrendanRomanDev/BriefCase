@@ -19,12 +19,20 @@ async def add_external_ref(
     ref_key: str,
     ref_url: Optional[str] = None,
     label: Optional[str] = None,
+    assignee: Optional[str] = None,
+    status_line: Optional[str] = None,
 ) -> dict:
     """Attach an external reference (Jira ticket, Confluence page, Figma file,
     GitHub PR, etc.) to an initiative or inbox item.
 
     ref_url is optional. For known ref_types (jira_epic, jira_ticket) the URL
     will be derived from the integrations config in settings.yaml if not given.
+
+    assignee names who owns the ref (a Jira ticket has one assignee) — pass
+    'unassigned' or omit for unowned work. status_line is a one-line open-loop
+    / status note the briefing renders next to the link (e.g. "handed to
+    Nishant, in progress" or "does it actually work? review SQL"). Both feed
+    the briefing doc.
     """
     try:
         conn = get_db_connection()
@@ -32,7 +40,7 @@ async def add_external_ref(
         ref_id = db_add_ref(
             conn, entity_type=entity_type, entity_id=entity_id,
             ref_type=ref_type, ref_key=ref_key, ref_url=resolved_url,
-            label=label
+            label=label, assignee=assignee, status_line=status_line
         )
         conn.close()
 
@@ -45,6 +53,8 @@ async def add_external_ref(
             "entity_type": entity_type,
             "entity_id": entity_id,
             "label": label,
+            "assignee": assignee,
+            "status_line": status_line,
         }
     except ValueError as e:
         return {"status": "error", "message": str(e)}
@@ -88,6 +98,17 @@ TOOL_SCHEMA = {
         "label": {
             "type": "string",
             "description": "Optional human-readable label (e.g. the ticket title)."
+        },
+        "assignee": {
+            "type": "string",
+            "description": "Who owns this ref (e.g. 'Nishant'). Pass 'unassigned' "
+                           "or omit for unowned work. Feeds the briefing line."
+        },
+        "status_line": {
+            "type": "string",
+            "description": "One-line open-loop/status note rendered next to the link "
+                           "in the briefing (e.g. 'handed off, in progress' or "
+                           "'does it work? review SQL')."
         },
     },
     "required": ["entity_type", "entity_id", "ref_type", "ref_key"],

@@ -1,6 +1,7 @@
 """Database connection management and CRUD helpers for BriefCase."""
 
 import json
+import re
 import shutil
 import sqlite3
 from datetime import datetime, UTC
@@ -96,6 +97,8 @@ CREATE TABLE IF NOT EXISTS external_refs (
     ref_key TEXT NOT NULL,
     ref_url TEXT,
     label TEXT,
+    assignee TEXT,
+    status_line TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -179,6 +182,14 @@ def _migrate(conn):
             "ALTER TABLE triage_queue ADD COLUMN parent_id INTEGER "
             "REFERENCES triage_queue(id)"
         )
+
+    external_ref_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(external_refs)").fetchall()
+    }
+    if 'assignee' not in external_ref_columns:
+        conn.execute("ALTER TABLE external_refs ADD COLUMN assignee TEXT")
+    if 'status_line' not in external_ref_columns:
+        conn.execute("ALTER TABLE external_refs ADD COLUMN status_line TEXT")
 
     conn.commit()
 
@@ -762,9 +773,14 @@ def _entity_exists(conn, entity_type: str, entity_id: int) -> bool:
 
 def add_external_ref(conn, entity_type: str, entity_id: int, ref_type: str,
                      ref_key: str, ref_url: str = None,
-                     label: str = None) -> int:
+                     label: str = None, assignee: str = None,
+                     status_line: str = None) -> int:
     """Attach an external ref (Jira ticket, Confluence page, Figma file, etc.)
     to an initiative or inbox item. Returns the new ref ID.
+
+    assignee is who owns the ref (a Jira ticket has one assignee); pass None
+    or the literal 'unassigned' for unowned work. status_line is a one-line
+    open-loop / status note the briefing renders next to the link.
     """
     if entity_type not in VALID_ENTITY_TYPES:
         raise ValueError(f"entity_type must be one of {VALID_ENTITY_TYPES}")
@@ -772,13 +788,35 @@ def add_external_ref(conn, entity_type: str, entity_id: int, ref_type: str,
         raise ValueError(f"{entity_type} #{entity_id} not found")
     cursor = conn.execute(
         """INSERT INTO external_refs
-           (entity_type, entity_id, ref_type, ref_key, ref_url, label, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+           (entity_type, entity_id, ref_type, ref_key, ref_url, label,
+            assignee, status_line, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (entity_type, entity_id, ref_type, ref_key, ref_url, label,
-         datetime.now(UTC).isoformat())
+         assignee, status_line, datetime.now(UTC).isoformat())
     )
     conn.commit()
     return cursor.lastrowid
+
+
+def update_external_ref(conn, ref_id: int, **kwargs) -> bool:
+    """Update mutable fields on an existing external ref. Returns True if the
+    row was found and something changed.
+
+    Updatable: label, ref_url, assignee, status_line. Pass an empty string to
+    clear a field (distinct from None, which leaves it untouched) — this lets
+    the briefing flow explicitly un-assign a ticket.
+    """
+    allowed = {'label', 'ref_url', 'assignee', 'status_line'}
+    updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if not updates:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [ref_id]
+    cursor = conn.execute(
+        f"UPDATE external_refs SET {set_clause} WHERE id = ?", values
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 def remove_external_ref(conn, ref_id: int) -> bool:
@@ -926,6 +964,134 @@ def consume_decisions(conn, initiative_id: int = None,
         )
     conn.commit()
     return cursor.rowcount
+
+
+# --- Briefing snapshot + reconciliation ---
+
+def get_briefing_snapshot(conn) -> dict:
+    """Assemble the DB-side raw material the briefing render reconciles against.
+
+    Returns active + on-hold initiatives, each with its members, external
+    refs (tickets with assignee/status_line), and pending decisions; plus a
+    flat roster of every distinct member name across initiatives, and any
+    open inbox items that carry a Jira external_ref (so the render can group
+    ticket-bearing work that never became a formal initiative).
+
+    This is deliberately NOT the briefing itself — it's the structured facts
+    the agent layers under the human-authored doc. The doc is allowed to lead
+    the DB; this snapshot is what lets the render surface where they diverge.
+    """
+    initiatives = []
+    roster = {}
+    for init in get_all_initiatives(conn):
+        if init.get('status') in ('archived', 'completed', 'done'):
+            continue
+        members = get_initiative_members(conn, init['id'])
+        refs = get_external_refs(conn, entity_type='initiative',
+                                 entity_id=init['id'])
+        decisions = get_decisions(conn, initiative_id=init['id'],
+                                  status='pending')
+        for m in members:
+            roster.setdefault(m['name'], []).append(init['slug'])
+        tags = init.get('tags')
+        if tags:
+            try:
+                tags = json.loads(tags)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        initiatives.append({
+            'id': init['id'],
+            'name': init['name'],
+            'slug': init['slug'],
+            'status': init.get('status'),
+            'deadline': init.get('deadline'),
+            'description': init.get('description'),
+            'tags': tags,
+            'members': members,
+            'refs': refs,
+            'pending_decisions': decisions,
+        })
+
+    # Inbox items that carry a Jira ref but aren't tied to an initiative —
+    # loose ticket-bearing work worth surfacing in a bucket.
+    orphan_ref_rows = conn.execute(
+        """SELECT er.*, i.title AS inbox_title, i.initiative_id
+           FROM external_refs er
+           JOIN inbox i ON er.entity_id = i.id
+           WHERE er.entity_type = 'inbox'
+             AND i.completed_at IS NULL
+             AND i.initiative_id IS NULL
+             AND er.ref_type IN ('jira_ticket', 'jira_epic', 'jira')
+           ORDER BY er.created_at DESC"""
+    ).fetchall()
+    orphan_refs = [dict(r) for r in orphan_ref_rows]
+
+    return {
+        'initiatives': initiatives,
+        'roster': roster,
+        'orphan_refs': orphan_refs,
+    }
+
+
+def compute_briefing_mismatches(conn, existing_doc: str,
+                                snapshot: dict = None) -> list:
+    """Compare the current briefing doc text against DB state and return a
+    batched list of things that look stale or unrecorded. Advisory only — the
+    render never mutates the DB off the back of these; the agent surfaces them
+    and lets Brendan decide.
+
+    Each mismatch is a dict: {kind, detail, suggestion}. Kinds:
+      - 'ticket_in_doc_not_in_db'  — a THRIV-#### key appears in the doc but
+        no external_ref records it.
+      - 'initiative_stale'         — an active initiative is mentioned nowhere
+        in the doc (may be stale/closed in reality).
+      - 'person_not_in_roster'     — a name attributed to work in the doc has
+        no initiative_members row anywhere.
+      - 'ref_missing_status'       — a recorded ticket ref has no status_line
+        yet, so it renders bare.
+    """
+    if snapshot is None:
+        snapshot = get_briefing_snapshot(conn)
+    doc = existing_doc or ""
+    doc_lower = doc.lower()
+    mismatches = []
+
+    # Jira keys in the doc (THRIV-1234 style) with no external_ref row.
+    doc_keys = set(re.findall(r'\b[A-Z][A-Z0-9]+-\d+\b', doc))
+    for key in sorted(doc_keys):
+        recorded = get_external_refs(conn, ref_key=key)
+        if not recorded:
+            mismatches.append({
+                'kind': 'ticket_in_doc_not_in_db',
+                'detail': f"{key} is in the briefing but not recorded as an external_ref.",
+                'suggestion': f"add_external_ref for {key} on the relevant initiative/inbox item.",
+            })
+
+    # Active initiatives absent from the doc entirely.
+    for init in snapshot['initiatives']:
+        name = (init.get('name') or '').lower()
+        slug = (init.get('slug') or '').lower()
+        if name and name not in doc_lower and slug not in doc_lower:
+            mismatches.append({
+                'kind': 'initiative_stale',
+                'detail': (f"Initiative '{init['name']}' ({init['slug']}) is "
+                           f"active in the DB but not mentioned in the briefing."),
+                'suggestion': ("Confirm it's still active, or "
+                               "manage_initiative(action='update', status='archived') if not."),
+            })
+
+    # Recorded ticket refs with no status_line (render bare).
+    for init in snapshot['initiatives']:
+        for ref in init['refs']:
+            if ref.get('ref_type', '').startswith('jira') and not ref.get('status_line'):
+                mismatches.append({
+                    'kind': 'ref_missing_status',
+                    'detail': (f"{ref.get('ref_key')} on '{init['slug']}' has no "
+                               f"status_line — it'll render without an open-loop note."),
+                    'suggestion': "update_external_ref(status_line=...) so the briefing line is useful.",
+                })
+
+    return mismatches
 
 
 # --- Backup ---

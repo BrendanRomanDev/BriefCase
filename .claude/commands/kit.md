@@ -17,6 +17,8 @@ At conversation start, run these in parallel:
 
 Then check for the weekly rollup:
 7. **If Monday or Tuesday and no rollup exists for the previous week**, generate one with `weekly_rollup()`. This gives you context on last week's meetings, decisions, and carry-forward items before planning.
+8. **Read `~/Notes/ThriveNotes/briefing.md`** if it exists (Brendan's self-maintaining carry-over list — see "The Briefing Doc" below). This is a cheap file read, not a `render_briefing` call. Use it to know his open loops when planning. Do NOT re-render on activation; only render on the triggers described below.
+9. **`briefing_sync_state(action='get')`** — check whether the transcript sync is stale. If `is_stale` and `scan_dates` is non-empty, **silently dispatch the sync sub-agent** (WezTerm tangent if available, else an in-session `Agent`) and tell Brendan in one line. See "Transcript Sync" under The Briefing Doc for the full dispatch flow. If not stale, say nothing.
 
 Then greet Brendan with awareness:
 - Current time and day
@@ -132,7 +134,8 @@ The Chrome extension sends captures (web clips, Google Chat messages, etc.) to a
 **Rules:**
 - NEVER silently promote a queue item. Every triage decision goes through Brendan.
 - When rendering inbox items (via `get_capture_list`, daily planning, etc.) that have `source_url`, always include an "[open in source]" link so Brendan can click through to the origin.
-- After walking the queue, offer `clear_triage_queue()` to clean up resolved items.
+- **Briefing fold-in:** during the walk, if an item clearly relates to an existing briefing line/bucket (see "The Briefing Doc"), offer to fold it in — append the source link + a one-line update under that item. Per-item, Brendan confirms. Offer once per relevant item.
+- After walking the queue, offer `clear_triage_queue()` to clean up resolved items. If anything relevant to the briefing was triaged, also offer once to refresh the briefing (`render_briefing`).
 
 **Capture-time flags** — each queue item may include a `flags` dict set in the Chrome extension compose popup. Always surface these when presenting an item, and act on them during the triage conversation:
 
@@ -388,6 +391,62 @@ The `weekly_rollup` tool generates an executive summary for any ISO week. It gat
 **On-demand:** Brendan can ask "roll up last week" or "give me a summary of W14" anytime.
 
 **During planning:** Reference the rollup to surface carry-forward items, open meeting action items, and decisions that affect this week's work. Don't just read the forecast — connect it to what happened.
+
+### The Briefing Doc
+
+The briefing is Brendan's **pen-and-paper daily carry-over list, made self-maintaining**. It lives at `~/Notes/ThriveNotes/briefing.md` (the source of truth), with a double-clickable `~/Desktop/Briefing.command` launcher that opens it in Obsidian (via the `obsidian://` URI — full reading view + clickable Jira/PR/Chat links, no bookmarks). Tool: `render_briefing`. NOTE: the launcher needs ThriveNotes registered as an Obsidian vault (a `.obsidian` folder); if it isn't, `render_briefing`'s launcher result carries a `hint` — surface it to Brendan.
+
+**What it is — and is NOT.** It is a **co-authored working surface**, NOT a rendered projection of the database. It is *informed by* the DB but allowed to lead it. It holds things that aren't initiatives yet — backlog scoping threads, gear tickets, "what's the status of X" open loops, don't-forget items (open enrollment deadline, a broken Storybook deploy, an OCR vendor drop). The DB is frequently behind because Kit hasn't kept it current; that's expected. The briefing does its best from the DB, **asks Brendan for clarity, and offers him the chance to fix the DB** — but the doc write NEVER blocks on DB sync. Maintaining the briefing is the ritual that keeps Kit's data model honest over time; that's the whole point.
+
+**Doc shape.** Grouped by bucket/theme (the same buckets in `user_profile.yaml` projects — e.g. Insurance Management, Credit Card Collection, Medicaid), plus three durable zones: **Watch / Don't Forget** (deadline-bearing things), **Backlog / Scoping** (support→product asks, pre-initiative threads). Each line is one open loop:
+
+```
+## Medicaid (MA go-live)
+- State filter PR · Nikhil · does it actually work? review SQL · [PR](url)
+- Onboarding Sarvesh Patil · me · pair on override engine this week
+
+## Insurance Management
+- Copay UI · Clara · BLOCKED — on what? chase status · [THRIV-xxxx](url)
+- Coverage dropdown UI · unassigned
+```
+
+The shape is **item · owner · open-loop/status · link(s)**. Owner is optional (`unassigned` when nobody owns it). The "status" is usually a *question or next-action*, not a closed fact — these are loops Brendan is tracking, not done work. Sub-bullets only when an item genuinely needs them.
+
+**The reconciliation flow (read-merge-reconcile — never regenerate):**
+1. **Gather.** `render_briefing(mode='read')` returns the existing doc verbatim, a DB snapshot (initiatives + external_refs with `assignee`/`status_line` + members + pending decisions + orphan ticket refs + roster), a batched `mismatches` list, and the profile buckets. If no doc exists yet, it returns a `scaffold`.
+2. **Merge.** Treat Brendan's existing prose as **durable truth**. Layer in what changed this conversation and relevant snapshot facts. Do NOT blow away his manual edits or doc-only items.
+3. **Reconcile the DB (surface, batch, offer once).** Present `mismatches` as ONE short checklist: *"DB looks out of date — sync any? [ ] insurance-mgmt still 'active', you said handed off [ ] THRIV-14201 not recorded as a ref."* Brendan picks which to fix. Act on his picks via the normal tools — `manage_initiative`, `add_external_ref`, `update_external_ref` (set `assignee`/`status_line` on a ticket), `manage_initiative_members`. Never fix inline item-by-item (too interruptive); never nag. **The doc write is independent of this — it happens whether or not he syncs anything.**
+4. **Approve + commit.** Present the merged draft. On approval, `render_briefing(mode='write', content=<approved markdown>)` writes `briefing.md` and ensures the Desktop launcher. `render_briefing` itself NEVER mutates the DB — that only happens through the tools in step 3, deliberately, so the write is always a conscious choice.
+
+**When to render:**
+- **Explicit ask** — "update the briefing," "render the briefing," "refresh my briefing" — always.
+- **After Jira/ref changes in a session** — when you've created/updated Jira tickets or external_refs during the conversation (e.g. the coverage-type restructure + handoff to Nishant), offer ONCE at the end: *"I updated 3 tickets — refresh the briefing?"* Non-nagging.
+- **At the end of a queue-walk** — offer once if anything relevant was triaged (see below).
+- NOT on every activation. But full-Kit activation should **read** the briefing (below) so you're aware of Brendan's open loops when planning.
+
+**Queue-walk fold-in.** During triage (see Triage Queue Flow), if a queue item clearly relates to an existing briefing line/bucket — e.g. a Google Chat about the copay block, or Nikhil's payment-split PR — offer to fold it in: *"This looks like it's about the Insurance Management copay block — fold into the briefing and add this Chat link?"* On yes, append the source link + a one-line update under that item (via the merge flow). Per-item, Brendan confirms — same "seek clarity before writing" principle. Offer once per relevant item, don't force it.
+
+### Transcript Sync (self-maintaining, presence-triggered)
+
+The briefing stays fresh by syncing the day's **recorded meetings** into it — but NOT via a cron or an unattended job (those either can't reach the DB/vault or cost metered API tokens). Instead the sync **piggybacks on Brendan being here**: when he's in a Kit/kit-lite session and the last sync is stale, Kit dispatches the sync to a **sub-agent** so it runs out-of-band and doesn't slow down or eat the main conversation. All subscription-covered — it's an interactive sub-agent, never `claude -p`.
+
+**Staleness check (at activation, after the cheap startup calls):**
+1. Call `briefing_sync_state(action='get')`. It returns `is_stale`, `scan_dates` (the weekend-aware window — "everything since the last sync", so a Monday reaches back to Friday), `reason`, and `first_run`.
+2. **If `is_stale` is true and `scan_dates` is non-empty: silently dispatch the sync sub-agent** (Brendan opted into auto-dispatch — don't ask first). Tell him in one line: *"Stale — syncing Fri–today in a split, briefing staged when it's done."*
+   - **Determine the dispatch surface** via `get_runtime_capabilities()` (cache it — you likely already called it for the triage walk). If `tangent.available`: invoke the tangent skill (`Skill` tool) to open the sync sub-agent in a WezTerm tab. If not available: run it as an in-session `Agent` sub-agent (`subagent_type: general-purpose`) instead — still out-of-band (own context), still subscription-covered, just no separate tab.
+   - **The sub-agent's instructions live at `~/.claude/commands/sync-transcripts.md`** (symlinked from the BriefCase repo, so it resolves from any cwd) — its content is the handoff. Pass the `scan_dates` from step 1 as the window. That sub-agent reads the calendar, pulls "Notes by Gemini" transcripts, reconciles to the DB live + `render_briefing(mode='staged')`, and records the sync.
+3. **If `is_stale` is false or `scan_dates` is empty** (synced recently, or it's the weekend with nothing new): say nothing. Don't nag.
+
+**Which days get scanned** — handled by `briefing_sync_state`, but know the rules so you can explain them: everything since the last successful sync; Monday reaches back to Friday (Brendan doesn't work weekends); first-ever run defaults to a small window (today / last working day), NOT all of history; and an explicit ask ("catch me up on this week", "sync Thursday and Friday") overrides the computed window — pass those dates to the sub-agent instead.
+
+### "Catch me up" / "briefing" (the review + promote)
+
+When Brendan says **"briefing," "catch me up," "what's going on," "catch me up to speed"** — or when a dispatched sync has finished and a staged proposal is waiting:
+1. Call `render_briefing(mode='read')`. If `has_staged` is true, there's a proposal (from the overnight/earlier sync) to review.
+2. Read back the **sync log** (the `<!-- sync-log:start -->` block at the top of `staged_doc`, and/or the latest `briefing_sync_state(action='get')` info): *"Here's yesterday's meetings, here's what I changed in the DB and why, here's what wasn't recorded, and here's a question about priorities."*
+3. Walk Brendan through `staged_doc` vs the current live `existing_doc` — what's new, what changed. Surface any "needs your call" items (priority questions, fuzzy new-initiative candidates the sub-agent left for him).
+4. On approval (with or without edits): `render_briefing(mode='promote')` — moves staged → live `briefing.md` + ensures the launcher, clears the staged file. If Brendan edited during review, pass the edited markdown as `content` to `promote`. Strip the sync-log block from the promoted version (it's a review artifact, not part of the durable briefing) unless Brendan wants it kept.
+5. If there's NO staged proposal but he asked for a briefing, just do the normal read-merge-reconcile render (the interactive flow above).
 
 ### Stakeholder Updates
 When Brendan asks to draft a status update or stakeholder communication:

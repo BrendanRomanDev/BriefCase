@@ -7,7 +7,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-VERSION = "0.13.0"
+VERSION = "0.14.0"
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,8 @@ CONVERSATION START CHECKLIST:
 5. Read ~/.briefcase/user_profile.yaml - Role, team, projects
 6. list_pdlc_projects() - PDLC projects in Brendan's lane. If any return with empty briefcase_links, mention unlinked count in the greeting (one line). Do NOT auto-walk — wait for the user to say "walk PDLC" or "align PDLC."
 7. Check for current week's rollup - If Monday/Tuesday and no rollup exists, generate with weekly_rollup()
+8. Read ~/Notes/ThriveNotes/briefing.md if it exists - Brendan's self-maintaining carry-over list (cheap file read, NOT a render_briefing call). Know his open loops before planning. Do NOT re-render on activation. See BRIEFING DOC below.
+9. briefing_sync_state(action='get') - if is_stale and scan_dates is non-empty, silently dispatch the transcript-sync sub-agent (WezTerm tangent if get_runtime_capabilities().tangent.available, else an in-session Agent) and tell Brendan in one line. If not stale, say nothing. See TRANSCRIPT SYNC below.
 
 TOOL QUICK GUIDE:
 - brain_dump: Capture tasks, optionally link to initiative. target_week param for week-level scheduling. Accepts source, source_url, source_metadata for captures that came from elsewhere (e.g. Google Chat).
@@ -34,7 +36,9 @@ TOOL QUICK GUIDE:
 - clear_triage_queue: Delete resolved items from the queue (history cleanup).
 - manage_initiative: CRUD for projects/initiatives. Create action accepts source fields for origins.
 - manage_initiative_members: Add/remove/list team members
-- add_external_ref / remove_external_ref / list_external_refs: Attach Jira tickets, Confluence pages, Figma files, etc. to initiatives or inbox items. ref_type='jira_epic' or 'jira_ticket' auto-derives the URL from integrations.jira.base_url in settings.yaml. Use for every initiative that has a real-world ticket home and for inbox items that relate to a specific remote artifact.
+- add_external_ref / update_external_ref / remove_external_ref / list_external_refs: Attach Jira tickets, Confluence pages, Figma files, etc. to initiatives or inbox items. ref_type='jira_epic' or 'jira_ticket' auto-derives the URL from integrations.jira.base_url in settings.yaml. add_external_ref and update_external_ref both accept assignee (who owns the ticket) and status_line (one-line open-loop note) — these feed the briefing doc. update_external_ref changes those on an existing ref without re-adding it. Use for every initiative that has a real-world ticket home and for inbox items that relate to a specific remote artifact.
+- render_briefing: Maintain Brendan's self-updating briefing doc (~/Notes/ThriveNotes/briefing.md, opened via a ~/Desktop/Briefing.command launcher → Obsidian). See BRIEFING DOC below. mode='read' gathers doc + staged_doc + DB snapshot + mismatches; mode='write' commits approved markdown + ensures the launcher; mode='staged' writes briefing.staged.md (no launcher, the sub-agent sync path); mode='promote' moves staged→live. NEVER mutates the DB.
+- briefing_sync_state: Freshness marker + day-window for the transcript sync. action='get' returns is_stale + scan_dates (weekend-aware: Monday reaches back to Friday) + reason + first_run. action='record' marks a sync done (dates_covered, meetings_scanned, not_recorded). See TRANSCRIPT SYNC below.
 - plan_daily: Save daily task plan (calendar events handled by agent separately)
 - query_daily: Look up a day's task plan
 - get_forecast: DB-side forecast (deadlines, inbox, targeted items, current time) - agent merges with gcal
@@ -73,6 +77,27 @@ WEEKLY ROLLUP:
 - The rollup gathers: meeting notes from Obsidian, dailies, conversation notes, inbox activity.
 - Use it to brief the user on what happened last week and what's coming up.
 - Also available on-demand: "Roll up last week" or "Give me a summary of W14."
+
+BRIEFING DOC:
+- The briefing (~/Notes/ThriveNotes/briefing.md, opened via a ~/Desktop/Briefing.command launcher that fires the obsidian:// URI) is Brendan's pen-and-paper daily carry-over list, made self-maintaining. Tool: render_briefing. The launcher needs ThriveNotes registered as an Obsidian vault; if it lacks a .obsidian folder, render_briefing's launcher result carries a `hint` — surface it to Brendan.
+- It is a CO-AUTHORED working surface, NOT a projection of the DB. It is informed by the DB but ALLOWED TO LEAD IT. It holds things that aren't initiatives yet (backlog scoping threads, gear tickets, open-loop "what's the status of X" items, don't-forget items). The DB is frequently behind; that's expected. Maintaining the briefing is the ritual that keeps the data model honest — surface DB drift, offer to fix it, but the doc write NEVER blocks on DB sync.
+- Doc shape: grouped by bucket/theme (same buckets as user_profile.yaml projects — e.g. Insurance Management, Credit Card Collection, Medicaid), plus a "Watch / Don't Forget" zone (deadline-bearing) and a "Backlog / Scoping" zone (pre-initiative threads). Each line is one open loop: item · owner · open-loop-or-status · link(s). Owner is optional ('unassigned'). The status is usually a QUESTION or NEXT-ACTION, not a closed fact.
+- Reconciliation flow (READ-MERGE-RECONCILE, never regenerate):
+  1. render_briefing(mode='read') → existing doc verbatim + DB snapshot (initiatives + external_refs w/ assignee/status_line + members + pending decisions + orphan ticket refs + roster) + batched `mismatches` list + profile buckets. Returns a `scaffold` if no doc exists yet.
+  2. Treat Brendan's existing prose as durable truth. Layer in what changed this conversation + relevant snapshot facts. Do NOT blow away manual edits or doc-only items.
+  3. Surface `mismatches` as ONE batched checklist ("DB looks out of date — sync any?"). Act on Brendan's picks via manage_initiative / add_external_ref / update_external_ref / manage_initiative_members. Never fix inline per-item; never nag. The doc write is independent of DB sync.
+  4. Present the merged draft, get approval, then render_briefing(mode='write', content=<approved markdown>) — writes the file + ensures the Desktop launcher. render_briefing NEVER mutates the DB; that only happens via the tools in step 3, deliberately.
+- When to render: explicit ask ("update the briefing") always; offer ONCE after Jira/ref changes in a session; offer ONCE at end of a queue-walk if something relevant was triaged. NOT on every activation — but full-Kit activation should READ briefing.md (cheap file read) to know Brendan's open loops.
+- Queue-walk fold-in: during triage, if an item clearly relates to an existing briefing line/bucket (e.g. a Chat about the copay block), offer to fold it in — append the source link + a one-line update under that item. Per-item, Brendan confirms.
+
+TRANSCRIPT SYNC (self-maintaining, presence-triggered):
+- The briefing stays fresh by syncing the day's RECORDED meetings into it — but NOT via a cron or unattended job. It piggybacks on Brendan being in a Kit/kit-lite session. All subscription-covered (an interactive sub-agent, never `claude -p`).
+- Google Calendar attaches meeting transcripts as a Google Doc titled "Notes by Gemini" in the event's `attachments` array once recorded. No such attachment = the meeting was NOT recorded (note it, don't fabricate).
+- Staleness check at activation: briefing_sync_state(action='get') returns is_stale, scan_dates (weekend-aware window — "everything since last sync", so Monday reaches back to Friday since Brendan doesn't work weekends), reason, first_run. If is_stale AND scan_dates non-empty → SILENTLY dispatch the sync sub-agent (Brendan opted into auto-dispatch, don't ask). Tell him one line. If not stale / nothing new → say nothing, don't nag.
+- Dispatch surface: get_runtime_capabilities() ONCE (cache it). tangent.available → open the sync sub-agent in a WezTerm tab via the Skill tool. Not available → run it as an in-session Agent sub-agent (subagent_type='general-purpose'). Either way it's out-of-band so the main conversation stays fast.
+- The sub-agent's instructions live at .claude/commands/sync-transcripts.md — pass the scan_dates as the window. It reads the calendar, pulls "Notes by Gemini" transcripts, reconciles to the DB LIVE (add_external_ref/update_external_ref/record_decision/manage_initiative — conservative on creating new initiatives) AND render_briefing(mode='staged'), then briefing_sync_state(action='record', dates_covered=...). It NEVER writes the live briefing.md — only the staged proposal.
+- Day-window rules (handled by briefing_sync_state): everything since the last successful sync; Monday reaches back to Friday; first-ever run defaults to a small window (NOT all history); an explicit ask ("catch me up on this week", "sync Thursday and Friday") overrides — pass those dates to the sub-agent.
+- "catch me up" / "briefing" / "what's going on": render_briefing(mode='read'). If has_staged, a proposal is waiting — read back the sync log (the <!-- sync-log --> block at the top of staged_doc), walk staged_doc vs the live existing_doc, surface "needs your call" items, then on approval render_briefing(mode='promote') (pass edited content if Brendan tweaked; strip the sync-log block from the promoted doc). No staged proposal → do the normal read-merge-reconcile render.
 
 TRIAGE QUEUE FLOW:
 - The Chrome extension POSTs captures to a local sidecar which writes to the triage_queue table.
@@ -217,6 +242,10 @@ def _import_external_ref_tools():
         add_external_ref, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, add_external_ref
 
+    from briefcase.mcp_server.tools.update_external_ref import (
+        update_external_ref, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, update_external_ref
+
     from briefcase.mcp_server.tools.remove_external_ref import (
         remove_external_ref, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, remove_external_ref
@@ -288,6 +317,14 @@ def _import_reporting_tools():
     from briefcase.mcp_server.tools.weekly_rollup import (
         weekly_rollup, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
     yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, weekly_rollup
+
+    from briefcase.mcp_server.tools.render_briefing import (
+        render_briefing, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, render_briefing
+
+    from briefcase.mcp_server.tools.briefing_sync_state import (
+        briefing_sync_state, TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA)
+    yield TOOL_NAME, TOOL_DESCRIPTION, TOOL_SCHEMA, briefing_sync_state
 
 
 def _import_printing_tools():
