@@ -1,5 +1,28 @@
 # BriefCase Changelog
 
+## Quarterly accomplishments log — 2026-07-29
+
+The transcript-sync sub-agent now accrues a quarter-by-quarter **wins log** as it runs, so Brendan can look back at each quarter and point to tangible needles moved — pod and personal — with links.
+
+### What it does
+
+New **Step 6** in `.claude/commands/sync-transcripts.md`: while scanning the day's recorded meetings, the sub-agent also detects **completed wins** and appends them to `<obsidian_vault>/accomplishments/<YYYY>-Q<N>.md` (quarter derived from the meeting date; vault root resolved from `settings.yaml` `obsidian_vault:`, same root `render_briefing` writes `briefing.md` under). Runs automatically every sync — no separate command.
+
+### The bar: "out the door," not "nearly there"
+
+A win is logged ONLY when it actually shipped/released/merged-to-main, a bug was fixed-and-live, or a milestone genuinely closed (spike finished, design decision locked). Explicitly **not** wins (these stay in the staged briefing): "in testing", "QA-complete", "ready to deploy pending X", "in UAT", "actively building", "PR up for review", side-quest tooling still being wired up. Gut check baked into the instructions: *could Brendan point a stakeholder at this today and say "this is done and live"?*
+
+### Shape + safety
+
+- Two sections per quarter: **Personal** (Brendan drove / reviewed-to-unblock / decided) and **Pod** (team shipped).
+- Each line: `- <what crossed the line> · <YYYY-MM-DD> · <link-or-source>` + a one-clause "why it mattered". Evidence priority: Jira → merged/closed PR → chat thread → doc → transcript URL. No artifact ⇒ date + source meeting, **no fabricated link**.
+- **Append-and-dedup, never rewrite** (Brendan hand-edits the file; edits must survive). Each line carries a hidden `<!-- win:<id>:<milestone> -->` marker (`id` = Jira key / `pr-<n>` / title-slug; `milestone` = `shipped` / `fixed` / `planning-done` / `decided`); the sub-agent reads the quarter file and skips markers already present. Same item can earn distinct lines for distinct finish lines over time (e.g. `decided` now, `shipped` later).
+- This is the **one sanctioned live-file write** for the sub-agent — everything else it produces is still staged (`briefing.staged.md`). Documented as such in the guardrails.
+
+### Sync touchpoints kept in sync
+
+Per the Triple Instruction Sync rule, the sub-agent's one-line job summary was updated in all three places (`kit.md`, `commands-work/kit-lite.md` in dotfiles, `server.py` `SERVER_INSTRUCTIONS`) to mention the wins log. The detailed spec lives only in `sync-transcripts.md`.
+
 ## Self-maintaining briefing doc — 2026-07-08
 
 New `render_briefing` tool (server bumped to `0.14.0`) that maintains Brendan's pen-and-paper daily carry-over list as a self-updating document at `~/Notes/ThriveNotes/briefing.md`, symlinked to `~/Desktop/Briefing.md`.
