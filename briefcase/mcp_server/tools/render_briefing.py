@@ -39,6 +39,12 @@ the unattended transcript-sync job uses:
     staged file. Called after Brendan reviews and approves the staged sync via
     the "briefing" / "catch me up" phrase. If `content` is provided, that
     approved-with-edits markdown is written to live instead of a raw copy.
+    If the promoted content carries a <!-- sync-log:start/end --> block (the
+    transcript-sync sub-agent's per-run summary), that block is archived
+    verbatim — newest-first — to general/briefing-sync-log.md before being
+    stripped from what actually lands in the live doc. This is the one place
+    a sync run's findings persist past this review; the JSON freshness marker
+    (briefing_sync_state) only remembers the most recent run, not history.
 
 The DB is never mutated by this tool. Any DB corrections that come out of the
 reconciliation happen via the normal tools (manage_initiative, add_external_ref,
@@ -47,6 +53,7 @@ always a conscious choice.
 """
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -64,6 +71,14 @@ BRIEFING_RELATIVE_PATH = "briefing.md"
 STAGED_RELATIVE_PATH = "briefing.staged.md"
 META_FENCE_START = "<!-- briefing:meta"
 META_FENCE_END = "-->"
+
+# Permanent, append-only record of what each transcript sync found — durable
+# even though the sync-log block itself is stripped from the promoted doc.
+SYNC_LOG_RELATIVE_PATH = "general/briefing-sync-log.md"
+SYNC_LOG_BLOCK_RE = re.compile(
+    r"<!--\s*sync-log:start\s*-->(.*?)<!--\s*sync-log:end\s*-->\s*",
+    re.DOTALL,
+)
 
 # Desktop launcher: a double-clickable .command that opens the briefing in
 # Obsidian via the obsidian:// URI (opens inside the vault — backlinks, reading
@@ -185,6 +200,53 @@ def _ensure_desktop_launcher() -> dict:
         return {"launched": False, "reason": str(e)}
 
 
+def _extract_sync_log(doc: str) -> tuple:
+    """Split a sync-log block out of a staged/promoted doc. Returns
+    (doc_without_block, block_inner_text_or_None). The block is the
+    <!-- sync-log:start/end --> comment the transcript-sync sub-agent
+    prepends to its staged proposal — it's a review aid, not meant to
+    live permanently in the briefing doc."""
+    match = SYNC_LOG_BLOCK_RE.search(doc)
+    if not match:
+        return doc, None
+    inner = match.group(1).strip()
+    stripped = (doc[:match.start()] + doc[match.end():]).strip("\n")
+    return stripped, inner
+
+
+_SYNC_LOG_HEADER = (
+    "# Briefing Sync Log\n\n"
+    "_Append-only history of what each transcript sync found — newest first. "
+    "Written automatically when a staged briefing is promoted; the sync-log "
+    "block itself is stripped out of the live briefing.md at that point._\n"
+)
+_SYNC_LOG_ENTRY_MARKER = "\n\n<!-- entries below -->\n\n"
+
+
+def _archive_sync_log(inner: str, today: str) -> str:
+    """Prepend a completed sync-log entry (newest-first) to the permanent
+    sync-log file, so review history survives past the promote that
+    discards the block from the live briefing. The file header is written
+    once and never duplicated — only entries accumulate. Returns the
+    written path."""
+    entry = f"## {today} sync\n\n{inner}\n"
+
+    existing = read_file(SYNC_LOG_RELATIVE_PATH)
+    if existing and _SYNC_LOG_ENTRY_MARKER in existing:
+        _, prior_entries = existing.split(_SYNC_LOG_ENTRY_MARKER, 1)
+        combined = (_SYNC_LOG_HEADER + _SYNC_LOG_ENTRY_MARKER
+                    + entry + "\n---\n\n" + prior_entries.lstrip("\n"))
+    else:
+        # No marker means either a fresh file or a pre-existing file from
+        # before this format existed — treat any prior content as the first
+        # (oldest) entry rather than dropping it.
+        prior_entries = existing.lstrip("\n") if existing else ""
+        combined = _SYNC_LOG_HEADER + _SYNC_LOG_ENTRY_MARKER + entry
+        if prior_entries:
+            combined += "\n---\n\n" + prior_entries
+    return write_file(SYNC_LOG_RELATIVE_PATH, combined, append=False)
+
+
 def _profile_buckets() -> list:
     """Active project buckets from user_profile.yaml (slug + name)."""
     profile = load_user_profile()
@@ -260,8 +322,16 @@ async def render_briefing(
                     "status": "error",
                     "message": "Nothing to promote — no briefing.staged.md and no `content` provided.",
                 }
+            # The sync-log block is a review aid, not durable briefing prose —
+            # archive it to the permanent sync-log file, then strip it before
+            # it lands in the live doc.
+            body, sync_log_inner = _extract_sync_log(_strip_meta(source))
+            sync_log_archived = None
+            if sync_log_inner:
+                sync_log_archived = _archive_sync_log(sync_log_inner, today)
+
             now = datetime.now().strftime("%Y-%m-%d %H:%M")
-            full = _strip_meta(source) + _meta_footer(now)
+            full = body + _meta_footer(now)
             written_path = write_file(BRIEFING_RELATIVE_PATH, full, append=False)
             launcher = _ensure_desktop_launcher()
             # Clear the staged file so it doesn't linger and re-surface.
@@ -280,6 +350,7 @@ async def render_briefing(
                 "relative_path": BRIEFING_RELATIVE_PATH,
                 "launcher": launcher,
                 "staged_cleared": staged_cleared,
+                "sync_log_archived": sync_log_archived,
                 "rendered_at": now,
             }
 
@@ -348,8 +419,11 @@ TOOL_DESCRIPTION = (
     "mode='write' commits approved markdown to the live doc + ensures the Desktop launcher. "
     "mode='staged' writes a proposal to briefing.staged.md WITHOUT touching the live file or "
     "launcher (the transcript-sync sub-agent's path). mode='promote' accepts a staged proposal "
-    "into the live doc and clears the staged file. This tool NEVER mutates the DB — do that "
-    "via the normal tools based on Brendan's picks."
+    "into the live doc, clears the staged file, and — if the content carries a "
+    "<!-- sync-log:start/end --> block — archives that block newest-first to "
+    "general/briefing-sync-log.md (the durable record of past sync runs) before stripping it "
+    "from the live doc. This tool NEVER mutates the DB — do that via the normal tools based "
+    "on Brendan's picks."
 )
 TOOL_SCHEMA = {
     "type": "object",
